@@ -49,17 +49,22 @@ def migrate_file(s3_key, dest_prefix, compression="zstd"):
 
 def to_arrow(source_key, dest_prefix, compression):
     data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=source_key)["Body"]
+    # TODO: we may be able to determine the schema ahead of time by checking the
+    # METADATA.json file instead of casting the table later on.
     table = csv.read_csv(gzip.open(data))
-    schema = pa.schema([])
 
+    fields = []
     for field in table.schema:
         if field.name in NOT_NULL:
-            schema.append(field.with_nullable(False))
+            fields.append(field.with_nullable(False))
         else:
-            schema.append(field.with_nullable(True))
+            fields.append(field.with_nullable(True))
+
+    schema = pa.schema(fields)
+    table = table.cast(schema)
 
     sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, schema) as writer:
+    with pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write(table)
 
     data = pa.compress(sink.getvalue(), codec="zstd", asbytes=True)
