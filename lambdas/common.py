@@ -18,6 +18,8 @@ _PYARROW_ARG_TRANSLATION = {
     "zst": "zstd",
 }
 
+NOT_NULL = ["target_start", "target_end", "release_date", "tag"]
+
 
 def list_collections():
     coll_prefixes = _s3_list(SOURCE_BUCKET, SOURCE_PREFIX, dirs_only=True)
@@ -57,11 +59,18 @@ def copy_metadata_file(collection, dataset, dest_prefix):
 
 def to_arrow(source_key, pkeys, dest_prefix, compression):
     data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=source_key)["Body"]
-    # TODO: we may be able to determine the schema ahead of time by checking the
-    # METADATA.json file instead of casting the table later on.
     table = csv.read_csv(gzip.open(data))
     schema = pa.schema([f.with_nullable(f.name not in pkeys) for f in table.schema])
-    table = table.cast(schema)
+
+    try:
+        # Datafeeds does not guaranttee that pkey fields are not null, this will error
+        # if there are nulls in pkey columns
+        table = table.cast(schema)
+    except ValueError:
+        # fallback to the minimal not-null columns
+        table = table.cast(
+            pa.schema([f.with_nullable(f.name not in NOT_NULL) for f in table.schema])
+        )
 
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, table.schema) as writer:
