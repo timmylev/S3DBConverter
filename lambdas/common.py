@@ -50,7 +50,7 @@ def migrate_file(s3_key, dest_prefix, compression="zstd"):
 def to_arrow(source_key, dest_prefix, compression):
     data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=source_key)["Body"]
     table = csv.read_csv(gzip.open(data))
-    schema = pa.schema()
+    schema = pa.schema([])
 
     for field in table.schema:
         if field.name in NOT_NULL:
