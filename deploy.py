@@ -19,7 +19,7 @@ LAMBDA_REQ = BASE_DIR / "requirements-lambda.txt"
 CFN_TEMPLATE = BASE_DIR / "template.yaml"
 
 CODE_BUCKET = "invenia-datafeeds-code"
-STACK_NAME = "s3db-converter"
+STACK_NAME = "S3DBConverter"
 
 
 def main():

@@ -7,7 +7,7 @@ S3DB data format converter.
 3. The destination/output must be in the same bucket (`invenia-datafeeds-output`), but with a non-overlapping prefix with the source (`version5/aurora/gz/`).
 
 ## Usage
-A stack with the name `s3db-converter` has already been deployed to the prod account, simply run the `trigger.py` scripts and follow the prompts.
+A stack with the name `S3DBConverter` has already been deployed to the prod account, simply run the `trigger.py` scripts and follow the prompts.
 Be sure to assume the prod account role beforehand.
 ```
 pip install -r requirements-trigger.txt
