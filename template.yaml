@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3DB Converter
+
+Parameters:
+  PythonVersion:
+    Type: String
+  CodeS3Bucket:
+    Type: String
+  CodeS3Key:
+    Type: String
+
+Resources:
+  JobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  JobSQS:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 86400  # 24 hr
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt JobDLQ.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 3000
+
+  LambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: !Sub /${AWS::StackName}/
+      Policies:
+        - PolicyName: LambdaFunctionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - s3:ListBucket
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::invenia-datafeeds-output
+              - Action:
+                  - s3:GetObject*
+                  - s3:PutObject*
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::invenia-datafeeds-output/*
+              - Action:
+                  - sqs:ReceiveMessage
+                  - sqs:SendMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Effect: Allow
+                Resource: !GetAtt JobSQS.Arn
+
+  RequestGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Description: A Lambda function to generate requests.
+      Handler: lambdas/request_generator.lambda_handler
+      Environment:
+        Variables:
+          SQS_URL: !Ref JobSQS
+      MemorySize: 512
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Runtime: !Ref PythonVersion
+      Timeout: 900  # 15 mins
+
+  RequestHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Description: A Lambda function to handle requests.
+      Handler: lambdas/request_handler.lambda_handler
+      MemorySize: 512
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Runtime: !Ref PythonVersion
+      Timeout: 900  # 15 mins
+
+  RequestHandlerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1  # max: 10
+      Enabled: true
+      EventSourceArn: !GetAtt JobSQS.Arn
+      FunctionName: !GetAtt RequestHandlerFunction.Arn
+
+Outputs:
+  RequestGeneratorFunctionName:
+    Value: !Ref RequestGeneratorFunction

@@ -1,18 +1,27 @@
+import json
 from urllib.parse import unquote
 
 import boto3
-from common import migrate_file
+
+from lambdas.common import to_arrow
 
 
 S3_CLIENT = boto3.client("s3")
 
 
 def lambda_handler(event, context):
+    print(event)
+
     for message in event["Records"]:
-        s3_key = unquote(message["body"])
-        attrs = message["messageAttributes"]
+        event = json.loads(unquote(message["body"]))
 
-        compression = attrs["compression"]["stringValue"]
-        dest_prefix = attrs["dest_prefix"]["stringValue"]
+        if "s3_key" in event:
+            s3_key = event["s3_key"]
+            compression = event["compression"]
+            dest_prefix = event["dest_prefix"]
+            pkeys = event["pkeys"]
 
-        migrate_file(s3_key, dest_prefix, compression)
+            to_arrow(s3_key, pkeys, dest_prefix, compression)
+
+        else:
+            raise Exception(f"Invalid event: {event}")
