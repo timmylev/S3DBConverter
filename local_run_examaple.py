@@ -1,7 +1,7 @@
 from lambdas import common
 from tqdm import tqdm
 
-dest_prefix = "version5/arrow/zst"
+dest_prefix = "version5/day/arrow/zst/"
 
 # all
 # keys = list(common.list_source_keys())

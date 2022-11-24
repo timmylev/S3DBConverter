@@ -17,6 +17,8 @@ EXT = {
     "zstd": "zst",
 }
 
+NOT_NULL = ["target_start", "target_end", "target_bounds", "release_date", "tag"]
+
 
 def list_source_keys(collection=None):
     s3_paginator = S3_CLIENT.get_paginator("list_objects_v2")
@@ -48,9 +50,16 @@ def migrate_file(s3_key, dest_prefix, compression="zstd"):
 def to_arrow(source_key, dest_prefix, compression):
     data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=source_key)["Body"]
     table = csv.read_csv(gzip.open(data))
+    schema = pa.schema()
+
+    for field in table.schema:
+        if field.name in NOT_NULL:
+            schema.append(field.with_nullable(False))
+        else:
+            schema.append(field.with_nullable(True))
 
     sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
+    with pa.ipc.new_stream(sink, schema) as writer:
         writer.write(table)
 
     data = pa.compress(sink.getvalue(), codec="zstd", asbytes=True)
