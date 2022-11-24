@@ -74,6 +74,7 @@ def to_arrow(source_key, pkeys, dest_prefix, compression):
 
 
 def batch_items(itr, chunk_size):
+    itr = iter(itr)
     chunk = list(islice(itr, chunk_size))
     while chunk:
         yield chunk

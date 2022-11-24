@@ -24,14 +24,18 @@ def main():
         if coll == "DONE":
             break
         elif coll == "ALL":
-            targets = "all"
+            targets = {c: list_datasets(c) for c in collections}
             break
         else:
             ds = prompt_checkbox("Select dataset(s):", list_datasets(coll))
             targets[coll] = sorted(set([*ds, *targets.get(coll, [])]))
 
     print("Trigerring Request Generator...")
-    trigger(stack_name, dest_prefix, targets)
+
+    for coll, ds in targets.items():
+        if ds:
+            trigger(stack_name, dest_prefix, {coll: ds})
+
     print("Done")
 
 

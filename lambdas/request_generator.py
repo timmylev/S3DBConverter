@@ -17,7 +17,6 @@ from lambdas.common import (
 
 SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
-SQS_URL = os.environ["SQS_URL"]
 
 
 def lambda_handler(event, context):
@@ -38,7 +37,7 @@ def lambda_handler(event, context):
 
             for batch in batch_items(items, SQS_BATCH_SIZE):
                 SQS_CLIENT.send_message_batch(
-                    QueueUrl=SQS_URL,
+                    QueueUrl=os.environ["SQS_URL"],
                     Entries=[
                         {"Id": str(i), "MessageBody": k} for i, k in enumerate(batch)
                     ],
@@ -60,26 +59,16 @@ class RequestGeneratorEvent(BaseModel):
     dest_prefix: str
     compression: str
 
-    @validator("datasets", pre=True)
+    @validator("datasets")
     def datasets_exist(cls, v):
-        if v == "all":
-            v = {c: list_datasets(c) for c in list_collections()}
+        invalid_colls = v.keys() - set(list_collections())
+        if invalid_colls:
+            raise Exception(f"Invalid collection(s): {invalid_colls}")
 
-        # validate collections
-        elif isinstance(v, dict):
-            invalid_colls = v.keys() - set(list_collections())
-            if invalid_colls:
-                raise Exception(f"Invalid collection(s): {invalid_colls}")
-
-            for coll, ds in v.items():
-                if ds == "all":
-                    v[coll] = list_datasets(coll)
-
-                # validate datasets
-                elif isinstance(ds, list):
-                    invalid_ds = set(ds) - set(list_datasets(coll))
-                    if invalid_ds:
-                        raise Exception(f"Invalid dataset(s): {invalid_ds}")
+        for coll, ds in v.items():
+            invalid_ds = set(ds) - set(list_datasets(coll))
+            if invalid_ds:
+                raise Exception(f"Invalid dataset(s): {invalid_ds}")
 
         return v
 
