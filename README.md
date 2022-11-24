@@ -3,7 +3,7 @@ S3DB data format converter.
 
 ## Limitations
 1. Re-partitioning of data/files is not yet supported.
-2. Outputs other than `arrow.zst` are not yet supported.
+2. Formats other than arrow are not yet supported.
 3. The destination/output must be in the same bucket (`invenia-datafeeds-output`), but with a non-overlapping prefix with the source (`version5/aurora/gz/`).
 
 ## Usage

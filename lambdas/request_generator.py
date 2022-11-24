@@ -8,7 +8,6 @@ from lambdas.common import (
     SOURCE_PREFIX,
     batch_items,
     copy_metadata_file,
-    get_dataset_pkeys,
     list_collections,
     list_datasets,
     list_keys,
@@ -27,10 +26,8 @@ def lambda_handler(event, context):
         for dataset in datasets:
             copy_metadata_file(collection, dataset, event.dest_prefix)
 
-            pkeys = get_dataset_pkeys(collection, dataset)
-
             items = [
-                single_key_request(s3_key, pkeys, event.compression, event.dest_prefix)
+                single_key_request(s3_key, event.compression, event.dest_prefix)
                 for s3_key in list_keys(collection, dataset)
             ]
             print(f"Submitting {len(items)} requests for '{collection}-{dataset}'...")
@@ -44,10 +41,9 @@ def lambda_handler(event, context):
                 )
 
 
-def single_key_request(s3_key, pkeys, compression, dest_prefix):
+def single_key_request(s3_key, compression, dest_prefix):
     packet = {
         "s3_key": s3_key,
-        "pkeys": pkeys,
         "compression": compression,
         "dest_prefix": dest_prefix,
     }

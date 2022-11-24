@@ -12,13 +12,15 @@ from pyarrow import csv
 SOURCE_BUCKET = "invenia-datafeeds-output"
 SOURCE_PREFIX = "version5/aurora/gz/"
 
-S3_CLIENT = boto3.client("s3")
-
+COMPRESSION = ["br", "bz2", "gz", "lz4", "zst", "sz"]
 _PYARROW_ARG_TRANSLATION = {
+    "br": "brotli",
+    "gz": "gzip",
+    "sz": "snappy",
     "zst": "zstd",
 }
 
-NOT_NULL = ["target_start", "target_end", "release_date", "tag"]
+S3_CLIENT = boto3.client("s3")
 
 
 def list_collections():
@@ -57,20 +59,9 @@ def copy_metadata_file(collection, dataset, dest_prefix):
     )
 
 
-def to_arrow(source_key, pkeys, dest_prefix, compression):
+def migrate_to_arrow(source_key, dest_prefix, compression):
     data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=source_key)["Body"]
-    table = csv.read_csv(gzip.open(data))
-    schema = pa.schema([f.with_nullable(f.name not in pkeys) for f in table.schema])
-
-    try:
-        # Datafeeds does not guaranttee that pkey fields are not null, this will error
-        # if there are nulls in pkey columns
-        table = table.cast(schema)
-    except ValueError:
-        # fallback to the minimal not-null columns
-        table = table.cast(
-            pa.schema([f.with_nullable(f.name not in NOT_NULL) for f in table.schema])
-        )
+    table = _convert_to_arrow(data)
 
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, table.schema) as writer:
@@ -80,6 +71,14 @@ def to_arrow(source_key, pkeys, dest_prefix, compression):
     data = pa.compress(sink.getvalue(), codec=codec, asbytes=True)
     dest_key = _gen_dest_key(source_key, dest_prefix, compression)
     S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=data)
+
+
+def _convert_to_arrow(data):
+    table = csv.read_csv(gzip.open(data))
+    not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
+    schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
+
+    return table.cast(schema)
 
 
 def batch_items(itr, chunk_size):

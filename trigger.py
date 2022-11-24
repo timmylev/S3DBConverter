@@ -6,15 +6,20 @@ import boto3
 from PyInquirer import prompt
 
 from deploy import STACK_NAME
-from lambdas.common import list_collections, list_datasets
+from lambdas.common import COMPRESSION, list_collections, list_datasets
 
 
 def main():
     print("-------------- S3DB Converted CLI --------------")
-    print("Ensure that you're assumed the prod account role.")
+    print("Ensure that you've assumed the prod account role.")
 
     stack_name = prompt_text("Stack Name:", default=STACK_NAME)
-    dest_prefix = os.path.join(prompt_text("Destination S3 Prefix"), "")
+    compression = prompt_options("Select dest compression:", COMPRESSION)
+    dest_prefix = prompt_text(
+        "Specify dest s3 prefix",
+        default=default_dest_prefix("arrow", compression, "day"),
+    )
+    dest_prefix = os.path.join(dest_prefix, "")
 
     targets = {}
     collections = list_collections()
@@ -34,15 +39,15 @@ def main():
 
     for coll, ds in targets.items():
         if ds:
-            trigger(stack_name, dest_prefix, {coll: ds})
+            trigger(stack_name, dest_prefix, compression, {coll: ds})
 
     print("Done")
 
 
-def trigger(stack_name, dest_prefix, datasets):
+def trigger(stack_name, dest_prefix, compression, datasets):
     event = {
         "dest_prefix": dest_prefix,
-        "compression": "zst",  # only zst is suported currently
+        "compression": compression,
         "datasets": datasets,
     }
 
@@ -58,6 +63,10 @@ def trigger(stack_name, dest_prefix, datasets):
 def get_stack_outputs(stack_name):
     resp = boto3.client("cloudformation").describe_stacks(StackName=stack_name)
     return {el["OutputKey"]: el["OutputValue"] for el in resp["Stacks"][0]["Outputs"]}
+
+
+def default_dest_prefix(fmt, com, part):
+    return "/".join(["version5", fmt, com, part, ""])
 
 
 def prompt_text(text: str, default: Optional[str] = None) -> str:
