@@ -10,17 +10,31 @@ Parameters:
     Type: String
 
 Resources:
-  JobDLQ:
+  SingleJobDLQ:
     Type: AWS::SQS::Queue
     Properties:
       MessageRetentionPeriod: 1209600 # 14 days
 
-  JobSQS:
+  SingleJobSQS:
     Type: AWS::SQS::Queue
     Properties:
       MessageRetentionPeriod: 86400  # 24 hr
       RedrivePolicy:
-        deadLetterTargetArn: !GetAtt JobDLQ.Arn
+        deadLetterTargetArn: !GetAtt SingleJobDLQ.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 3000
+
+  BatchJobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  BatchJobSQS:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 86400  # 24 hr
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BatchJobDLQ.Arn
         maxReceiveCount: 3
       VisibilityTimeout: 3000
 
@@ -59,7 +73,9 @@ Resources:
                   - sqs:GetQueueAttributes
                   - sqs:ChangeMessageVisibility
                 Effect: Allow
-                Resource: !GetAtt JobSQS.Arn
+                Resource:
+                  - !GetAtt SingleJobSQS.Arn
+                  - !GetAtt BatchJobSQS.Arn
 
   RequestGeneratorFunction:
     Type: AWS::Lambda::Function
@@ -71,13 +87,14 @@ Resources:
       Handler: lambdas/request_generator.lambda_handler
       Environment:
         Variables:
-          SQS_URL: !Ref JobSQS
+          SINGLE_JOB_SQS_URL: !Ref SingleJobSQS
+          BATCH_JOB_SQS_URL: !Ref BatchJobSQS
       MemorySize: 512
       Role: !GetAtt LambdaFunctionRole.Arn
       Runtime: !Ref PythonVersion
       Timeout: 900  # 15 mins
 
-  RequestHandlerFunction:
+  SingleJobRequestHandlerFunction:
     Type: AWS::Lambda::Function
     Properties:
       Code:
@@ -90,13 +107,34 @@ Resources:
       Runtime: !Ref PythonVersion
       Timeout: 900  # 15 mins
 
-  RequestHandlerEventSourceMapping:
+  SingleJobRequestHandlerEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
       BatchSize: 1  # max: 10
       Enabled: true
-      EventSourceArn: !GetAtt JobSQS.Arn
-      FunctionName: !GetAtt RequestHandlerFunction.Arn
+      EventSourceArn: !GetAtt SingleJobSQS.Arn
+      FunctionName: !GetAtt SingleJobRequestHandlerFunction.Arn
+
+  BatchJobRequestHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Description: A Lambda function to handle requests.
+      Handler: lambdas/request_handler.lambda_handler
+      MemorySize: 10240
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Runtime: !Ref PythonVersion
+      Timeout: 900  # 15 mins
+
+  BatchJobRequestHandlerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1  # max: 10
+      Enabled: true
+      EventSourceArn: !GetAtt BatchJobSQS.Arn
+      FunctionName: !GetAtt BatchJobRequestHandlerFunction.Arn
 
 Outputs:
   RequestGeneratorFunctionName:

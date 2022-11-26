@@ -15,6 +15,7 @@ def main():
 
     stack_name = prompt_text("Stack Name:", default=STACK_NAME)
     compression = prompt_options("Select dest compression:", COMPRESSION)
+    partition = prompt_options("Select dest partition:", ["day", "month", "year"])
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
         default=default_dest_prefix("arrow", compression, "day"),
@@ -39,15 +40,16 @@ def main():
 
     for coll, ds in targets.items():
         if ds:
-            trigger(stack_name, dest_prefix, compression, {coll: ds})
+            trigger(stack_name, dest_prefix, compression, partition, {coll: ds})
 
     print("Done")
 
 
-def trigger(stack_name, dest_prefix, compression, datasets):
+def trigger(stack_name, dest_prefix, compression, partition, datasets):
     event = {
         "dest_prefix": dest_prefix,
         "compression": compression,
+        "partition": partition,
         "datasets": datasets,
     }
 

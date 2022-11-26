@@ -1,11 +1,11 @@
 import gzip
 import json
 import os
+from datetime import datetime, timezone
 from itertools import islice
 
 import boto3
 import pyarrow as pa
-from inveniautils.timestamp import to_datetime
 from pyarrow import csv
 
 
@@ -53,7 +53,7 @@ def get_dataset_pkeys(collection, dataset):
 def extract_datetime(s3_key):
     filename = s3_key.rsplit("/", 1)[-1]
     ts = int(filename.split(".")[0])
-    return to_datetime(ts)
+    return datetime.fromtimestamp(ts, timezone.utc)
 
 
 def copy_metadata_file(collection, dataset, dest_prefix):
@@ -118,9 +118,20 @@ def _s3_list(bucket, prefix, dirs_only=False):
 
 
 def _gen_dest_key(file_start, coll, ds, dest_prefix, compression):
-    year = to_datetime(int(file_start)).year
+    year = datetime.fromtimestamp(file_start, timezone.utc).year
     filename = f"year={year}/{file_start}.arrow.{compression}"
     return os.path.join(dest_prefix, coll, ds, filename)
+
+
+def floor_dt(dt, period):
+    if period == "day":
+        return datetime(dt.year, dt.month, dt.day)
+    elif period == "month":
+        return datetime(dt.year, dt.month, 1)
+    elif period == "year":
+        return datetime(dt.year, 1, 1)
+    else:
+        raise Exception(f"invalid period: {period}")
 
 
 # def show_memory(text):
