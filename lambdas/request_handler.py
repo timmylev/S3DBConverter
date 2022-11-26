@@ -1,4 +1,5 @@
 import json
+import os
 from urllib.parse import unquote
 
 import boto3
@@ -15,12 +16,11 @@ def lambda_handler(event, context):
     for message in event["Records"]:
         event = json.loads(unquote(message["body"]))
 
-        if "s3_key" in event:
-            s3_key = event["s3_key"]
-            compression = event["compression"]
-            dest_prefix = event["dest_prefix"]
+        compression = event["compression"]
+        dest_prefix = event["dest_prefix"]
+        file_start = event["file_start"]
+        s3key_prefix = event["s3key_prefix"]
+        s3key_suffixes = event["s3key_suffixes"]
+        s3keys = [os.path.join(s3key_prefix, i) for i in s3key_suffixes]
 
-            migrate_to_arrow(s3_key, dest_prefix, compression)
-
-        else:
-            raise Exception(f"Invalid event: {event}")
+        migrate_to_arrow(s3keys, file_start, dest_prefix, compression)

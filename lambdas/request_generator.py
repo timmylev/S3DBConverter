@@ -1,13 +1,18 @@
 import json
 import os
+from datetime import timedelta
+from itertools import groupby
 
 import boto3
+from dateutil.relativedelta import relativedelta
+from inveniautils.dates import round_datetime
 from pydantic import BaseModel, validator
 
 from lambdas.common import (
     SOURCE_PREFIX,
     batch_items,
     copy_metadata_file,
+    extract_datetime,
     list_collections,
     list_datasets,
     list_keys,
@@ -22,38 +27,55 @@ def lambda_handler(event, context):
     print(f"Event: {event}")
     event = RequestGeneratorEvent(**event)
 
-    for collection, datasets in event.datasets.items():
-        for dataset in datasets:
-            copy_metadata_file(collection, dataset, event.dest_prefix)
+    for coll, dss in event.datasets.items():
+        for ds in dss:
+            copy_metadata_file(coll, ds, event.dest_prefix)
 
-            items = [
-                single_key_request(s3_key, event.compression, event.dest_prefix)
-                for s3_key in list_keys(collection, dataset)
-            ]
-            print(f"Submitting {len(items)} requests for '{collection}-{dataset}'...")
+            if event.partition == "day":
+                p = timedelta(days=1)
+            elif event.partition == "month":
+                p = relativedelta(months=1)
+            elif event.partition == "year":
+                p = relativedelta(years=1)
+            else:
+                raise Exception(f"Unknown periof {event.partition}")
+
+            items = generate_requests(coll, ds, event.compression, event.dest_prefix, p)
+            items = list(items)
+
+            print(f"Submitting {len(items)} requests for '{coll}-{ds}'...")
 
             for batch in batch_items(items, SQS_BATCH_SIZE):
                 SQS_CLIENT.send_message_batch(
                     QueueUrl=os.environ["SQS_URL"],
                     Entries=[
-                        {"Id": str(i), "MessageBody": k} for i, k in enumerate(batch)
+                        {"Id": str(i), "MessageBody": json.dumps(k)}
+                        for i, k in enumerate(batch)
                     ],
                 )
 
 
-def single_key_request(s3_key, compression, dest_prefix):
-    packet = {
-        "s3_key": s3_key,
-        "compression": compression,
-        "dest_prefix": dest_prefix,
-    }
-    return json.dumps(packet)
+def generate_requests(collection, dataset, compression, dest_prefix, period):
+    prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
+    s3_keys = sorted(list_keys(collection, dataset))
+    print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
+    gk_func = lambda key: round_datetime(extract_datetime(key), period, floor=True)
+    for gk, keys in groupby(s3_keys, key=gk_func):
+        keys = [k.removeprefix(prefix) for k in keys]
+        yield {
+            "file_start": int(gk.timestamp()),
+            "s3key_prefix": prefix,
+            "s3key_suffixes": keys,
+            "compression": compression,
+            "dest_prefix": dest_prefix,
+        }
 
 
 class RequestGeneratorEvent(BaseModel):
     datasets: dict[str, list[str]]
     dest_prefix: str
     compression: str
+    partition: str = "day"
 
     @validator("datasets")
     def datasets_exist(cls, v):

@@ -6,3 +6,5 @@ pyarrow
 pydantic
 plz
 PyInquirer
+inveniautils
+python-dateutil
