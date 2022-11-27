@@ -1,8 +1,10 @@
 # S3DBConverter
 S3DB data format converter:
 * formats: arrow
-* partition options: day, month
+* partition options: day, month, year
 * compression options: br, bz2, gz, lz4, zst, sz
+
+**WARNING:** Partitioning by year will fail for very large datasets such as CAISO Price Data due to AWS Lambda hitting max memory (10GB). We'll need to look into alternative such as AWS Fargate or Batch for this.
 
 ## Limitations
 1. Formats other than arrow are not yet supported.

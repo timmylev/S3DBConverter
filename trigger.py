@@ -9,9 +9,7 @@ from deploy import STACK_NAME
 from lambdas.common import COMPRESSION, list_collections, list_datasets
 
 
-# for large datasets such as caiso prices, aws lambda hits max memory (10gb)
-# at around 250 files/days, so we probably can't use lambda to batch yearly files.
-PARTITIONS = ["day", "month"]
+PARTITIONS = ["day", "month", "year"]
 
 
 def main():
@@ -21,6 +19,13 @@ def main():
     stack_name = prompt_text("Stack Name:", default=STACK_NAME)
     compression = prompt_options("Select dest compression:", COMPRESSION)
     partition = prompt_options("Select dest partition:", PARTITIONS)
+
+    if partition == "year":
+        print(
+            "WARNING: Partitioning by year will fail for very large datasets such as "
+            "CAISO Price Data due to AWS Lambda hitting max memory (10GB)."
+        )
+
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
         default=default_dest_prefix("arrow", compression, partition),
