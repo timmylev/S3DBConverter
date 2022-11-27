@@ -6,3 +6,4 @@ pyarrow
 pydantic
 plz
 PyInquirer
+psutil

@@ -1,2 +1,3 @@
 pyarrow
 pydantic
+psutil

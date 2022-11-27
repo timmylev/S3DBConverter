@@ -9,13 +9,18 @@ from deploy import STACK_NAME
 from lambdas.common import COMPRESSION, list_collections, list_datasets
 
 
+# for large datasets such as caiso prices, aws lambda hits max memory (10gb)
+# at around 250 files/days, so we probably can't use lambda to batch yearly files.
+PARTITIONS = ["day", "month"]
+
+
 def main():
     print("-------------- S3DB Converted CLI --------------")
     print("Ensure that you've assumed the prod account role.")
 
     stack_name = prompt_text("Stack Name:", default=STACK_NAME)
     compression = prompt_options("Select dest compression:", COMPRESSION)
-    partition = prompt_options("Select dest partition:", ["day", "month", "year"])
+    partition = prompt_options("Select dest partition:", PARTITIONS)
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
         default=default_dest_prefix("arrow", compression, partition),

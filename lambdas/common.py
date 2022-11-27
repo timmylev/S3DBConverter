@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from itertools import islice
 
 import boto3
+import psutil
 import pyarrow as pa
 from pyarrow import csv
 
@@ -77,28 +78,40 @@ def migrate_to_arrow(source_keys, file_start, dest_prefix, compression):
 
 
 def _convert_to_arrow(source_keys, compression):
-    tables = (
-        csv.read_csv(
-            gzip.open(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
-        )
-        for key in source_keys
-    )
+    download = lambda k: S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
 
-    table = pa.concat_tables(tables)
+    tables = []
+    # for large datasets such as caiso prices, aws lambda hits max memory (10gb)
+    # at around 250 files/days, so we probably can't use lambda to batch yearly files.
+    for i, key in enumerate(source_keys):
+        tables.append(csv.read_csv(gzip.open(download(key))))
+        show_memory(f"loaded table {i+1}")
+
+    table = pa.concat_tables(tables, promote=True)
+    show_memory("loaded all tables")
 
     not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
     schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
     table.cast(schema)
 
+    cdec = _PYARROW_ARG_TRANSLATION.get(compression, compression)
     sink = io.BytesIO()
-    codec = _PYARROW_ARG_TRANSLATION.get(compression, compression)
-    cfg = pa.ipc.IpcWriteOptions(compression=codec)
 
+    # on-the-fly compression is way more memory efficient, but only possible for
+    # zst and lz4
+    cfg = pa.ipc.IpcWriteOptions(compression=cdec) if cdec in ("zstd", "lz4") else None
     with pa.ipc.new_stream(sink, table.schema, options=cfg) as writer:
         writer.write(table)
 
     sink.seek(0)
-    return sink
+
+    # for non zst/lz4 compressions
+    if cfg is None:
+        sink = pa.compress(sink.getvalue(), codec=cdec, asbytes=True)
+
+    show_memory("compressed")
+
+    return sink  # can be a stream or bytes
 
 
 def batch_items(itr, chunk_size):
@@ -139,7 +152,6 @@ def floor_dt(dt, period):
 
 
 def show_memory(text):
-    import psutil
     process = psutil.Process(os.getpid())
     mb = process.memory_info().rss / 1_000_000
     print(f"{text}: {mb}MB")

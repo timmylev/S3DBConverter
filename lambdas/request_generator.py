@@ -33,7 +33,7 @@ def lambda_handler(event, context):
             if event.partition == "day":
                 sqs_url = os.environ["SINGLE_JOB_SQS_URL"]
 
-            elif event.partition in ("month", "year"):
+            elif event.partition == "month":
                 sqs_url = os.environ["BATCH_JOB_SQS_URL"]
 
             else:
