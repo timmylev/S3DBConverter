@@ -1,7 +1,7 @@
 # S3DBConverter
 S3DB data format converter:
 * formats: arrow
-* partition options: day, month, year
+* partition options: day, month
 * compression options: br, bz2, gz, lz4, zst, sz
 
 ## Limitations
