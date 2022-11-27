@@ -1,4 +1,5 @@
 import gzip
+import io
 import json
 import os
 from datetime import datetime, timezone
@@ -67,21 +68,15 @@ def copy_metadata_file(collection, dataset, dest_prefix):
 
 
 def migrate_to_arrow(source_keys, file_start, dest_prefix, compression):
-    table = _convert_to_arrow(source_keys)
-
-    sink = pa.BufferOutputStream()
-    codec = _PYARROW_ARG_TRANSLATION.get(compression, compression)
-    cfg = pa.ipc.IpcWriteOptions(compression=codec)
-
-    with pa.ipc.new_stream(sink, table.schema, options=cfg) as writer:
-        writer.write(table)
+    stream = _convert_to_arrow(source_keys, compression)
 
     coll, ds = source_keys[0].removeprefix(SOURCE_PREFIX).split("/")[:2]
     dest_key = _gen_dest_key(file_start, coll, ds, dest_prefix, compression)
-    S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=sink.getvalue())
+
+    S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
 
 
-def _convert_to_arrow(source_keys):
+def _convert_to_arrow(source_keys, compression):
     tables = (
         csv.read_csv(
             gzip.open(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
@@ -93,8 +88,17 @@ def _convert_to_arrow(source_keys):
 
     not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
     schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
+    table.cast(schema)
 
-    return table.cast(schema)
+    sink = io.BytesIO()
+    codec = _PYARROW_ARG_TRANSLATION.get(compression, compression)
+    cfg = pa.ipc.IpcWriteOptions(compression=codec)
+
+    with pa.ipc.new_stream(sink, table.schema, options=cfg) as writer:
+        writer.write(table)
+
+    sink.seek(0)
+    return sink
 
 
 def batch_items(itr, chunk_size):
@@ -134,8 +138,8 @@ def floor_dt(dt, period):
         raise Exception(f"invalid period: {period}")
 
 
-# def show_memory(text):
-#     import psutil
-#     process = psutil.Process(os.getpid())
-#     mb = process.memory_info().rss / 1_000_000
-#     print(f"{text}: {mb}MB")
+def show_memory(text):
+    import psutil
+    process = psutil.Process(os.getpid())
+    mb = process.memory_info().rss / 1_000_000
+    print(f"{text}: {mb}MB")

@@ -18,7 +18,7 @@ def main():
     partition = prompt_options("Select dest partition:", ["day", "month", "year"])
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
-        default=default_dest_prefix("arrow", compression, "day"),
+        default=default_dest_prefix("arrow", compression, partition),
     )
     dest_prefix = os.path.join(dest_prefix, "")
 
