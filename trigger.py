@@ -30,6 +30,7 @@ def main():
 
         if action == Options.BACKFILLS:
             prompt_backfills(api)
+
         elif action == Options.EXIT:
             print("Terminating...")
             sys.exit(0)
@@ -91,26 +92,37 @@ def prompt_backfills(api):
 
     targets = {}
     collections = list_collections()
-    options = ["DONE", Separator("======== collections ========"), "ALL", *collections]
+    options = [
+        "DONE",
+        "CANCEL",
+        Separator("======== collections ========"),
+        "ALL",
+        *collections,
+    ]
 
     while True:
         coll = prompt_options("Select collection:", options)
         if coll == "DONE":
+            break
+        elif coll == "CANCEL":
+            targets = {}
             break
         elif coll == "ALL":
             targets = {c: list_datasets(c) for c in collections}
             break
         else:
             ds = prompt_checkbox("Select dataset(s):", list_datasets(coll))
-            targets[coll] = sorted(set([*ds, *targets.get(coll, [])]))
+            if ds:
+                targets[coll] = sorted(set([*ds, *targets.get(coll, [])]))
 
-    print("Trigerring Request Generator...", end="", flush=True)
+    if targets:
+        print("Trigerring Request Generator...", end="", flush=True)
 
-    for coll, ds in targets.items():
-        if ds:
-            api.trigger_lambda(dest_prefix, compression, partition, {coll: ds})
+        for coll, ds in targets.items():
+            if ds:
+                api.trigger_lambda(dest_prefix, compression, partition, {coll: ds})
 
-    print(" Done")
+        print(" Done")
 
 
 def prompt_text(text: str, default: Optional[str] = None) -> str:
