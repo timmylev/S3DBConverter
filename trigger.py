@@ -1,22 +1,79 @@
 import json
 import os
+import sys
+from enum import Enum
 from typing import Optional
 
 import boto3
-from PyInquirer import prompt
+from PyInquirer import Separator, prompt
 
 from deploy import STACK_NAME
 from lambdas.common import COMPRESSION, list_collections, list_datasets
 
 
+PROD_ACCOUNT = 516256908252
 PARTITIONS = ["day", "month", "year"]
 
 
-def main():
-    print("-------------- S3DB Converted CLI --------------")
-    print("Ensure that you've assumed the prod account role.")
+class Options(str, Enum):
+    BACKFILLS = "Trigger S3DB Conversions"
+    EXIT = "Exit"
 
-    stack_name = prompt_text("Stack Name:", default=STACK_NAME)
+
+def main():
+    print("-------------- S3DB Converter CLI --------------")
+
+    api = API(prompt_text("Stack Name:", default=STACK_NAME))
+
+    while True:
+        action = prompt_options("What would you like to do", [i.value for i in Options])
+
+        if action == Options.BACKFILLS:
+            prompt_backfills(api)
+        elif action == Options.EXIT:
+            print("Terminating...")
+            sys.exit(0)
+
+
+class API:
+    def __init__(self, stack_name):
+        self.stack_name = stack_name
+        self._stack_outputs = None
+
+        self.aws_sesh = boto3.session.Session()
+
+        resp = self.aws_sesh.client("sts").get_caller_identity()
+        if int(resp["Account"]) != PROD_ACCOUNT:
+            raise Exception("Please assume prod account role.")
+
+        self.cfn = self.aws_sesh.client("cloudformation")
+        self.lmb = self.aws_sesh.client("lambda")
+
+    @property
+    def stack_outputs(self):
+        if self._stack_outputs is None:
+            resp = self.cfn.describe_stacks(StackName=self.stack_name)
+            outputs = resp["Stacks"][0]["Outputs"]
+            self._stack_outputs = {el["OutputKey"]: el["OutputValue"] for el in outputs}
+
+        return self._retriever_outputs
+
+    def trigger_lambda(self, dest_prefix, compression, partition, datasets):
+        event = {
+            "dest_prefix": dest_prefix,
+            "compression": compression,
+            "partition": partition,
+            "datasets": datasets,
+        }
+
+        self.lmb.invoke(
+            FunctionName=self.stack_outputs["RequestGeneratorFunctionName"],
+            InvocationType="Event",
+            Payload=json.dumps(event),
+        )
+
+
+def prompt_backfills(api):
     compression = prompt_options("Select dest compression:", COMPRESSION)
     partition = prompt_options("Select dest partition:", PARTITIONS)
 
@@ -28,15 +85,16 @@ def main():
 
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
-        default=default_dest_prefix("arrow", compression, partition),
+        default="/".join(["version5", "arrow", compression, partition, ""]),
     )
     dest_prefix = os.path.join(dest_prefix, "")
 
     targets = {}
     collections = list_collections()
+    options = ["DONE", Separator("======== collections ========"), "ALL", *collections]
 
     while True:
-        coll = prompt_options("Select collection:", ["DONE", "ALL", *collections])
+        coll = prompt_options("Select collection:", options)
         if coll == "DONE":
             break
         elif coll == "ALL":
@@ -46,39 +104,13 @@ def main():
             ds = prompt_checkbox("Select dataset(s):", list_datasets(coll))
             targets[coll] = sorted(set([*ds, *targets.get(coll, [])]))
 
-    print("Trigerring Request Generator...")
+    print("Trigerring Request Generator...", end="", flush=True)
 
     for coll, ds in targets.items():
         if ds:
-            trigger(stack_name, dest_prefix, compression, partition, {coll: ds})
+            api.trigger_lambda(dest_prefix, compression, partition, {coll: ds})
 
-    print("Done")
-
-
-def trigger(stack_name, dest_prefix, compression, partition, datasets):
-    event = {
-        "dest_prefix": dest_prefix,
-        "compression": compression,
-        "partition": partition,
-        "datasets": datasets,
-    }
-
-    outputs = get_stack_outputs(stack_name)
-
-    boto3.client("lambda").invoke(
-        FunctionName=outputs["RequestGeneratorFunctionName"],
-        InvocationType="Event",
-        Payload=json.dumps(event),
-    )
-
-
-def get_stack_outputs(stack_name):
-    resp = boto3.client("cloudformation").describe_stacks(StackName=stack_name)
-    return {el["OutputKey"]: el["OutputValue"] for el in resp["Stacks"][0]["Outputs"]}
-
-
-def default_dest_prefix(fmt, com, part):
-    return "/".join(["version5", fmt, com, part, ""])
+    print(" Done")
 
 
 def prompt_text(text: str, default: Optional[str] = None) -> str:
