@@ -89,6 +89,10 @@ def migrate_to_arrow(source_keys, file_start, dest_prefix, compression, level=No
     if level is not None and level not in COMPRESSION_LEVELS.get(compression, []):
         raise ValueError(f"Invalid compression level {level} for {compression}")
 
+    # TODO: it may be possible to write the table in 24-hr chunks as they are retrieved
+    # instead of all in one go, this may help us address the memory issue for yearly
+    # batches.
+
     table = _get_arrow_table(source_keys)
     show_memory("loaded all tables")
 

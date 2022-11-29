@@ -136,20 +136,27 @@ def prompt_backfills(api):
             if ds:
                 targets[coll] = sorted(set([*ds, *targets.get(coll, [])]))
 
-    if targets:
-        print("Trigerring Request Generator...", end="", flush=True)
+    if not targets:
+        print("No datasets selected...")
 
-        for coll, ds in targets.items():
-            if ds:
-                api.trigger_lambda(
-                    dest_prefix,
-                    compression,
-                    partition,
-                    {coll: ds},
-                    compression_level=compression_level,
-                )
+    else:
+        msg = f"Selected {sum([len(v) for v in targets.values()])} datasets. Proceed?"
+        if prompt_confirmation(msg):
+            print("Trigerring Request Generator...", end="", flush=True)
 
-        print(" Done")
+            for coll, ds in targets.items():
+                if ds:
+                    api.trigger_lambda(
+                        dest_prefix,
+                        compression,
+                        partition,
+                        {coll: ds},
+                        compression_level=compression_level,
+                    )
+
+            print(" Done")
+        else:
+            print("Cancelling...")
 
 
 def prompt_text(text, default=None, validate=None) -> str:
@@ -181,6 +188,16 @@ def prompt_checkbox(text: str, choices: list[str]) -> list[str]:
         "type": "checkbox",
         "message": text,
         "choices": [{"name": c} for c in choices],
+    }
+    return prompt([args])["data"]
+
+
+def prompt_confirmation(text: str, default=True) -> list[str]:
+    args = {
+        "name": "data",
+        "type": "confirm",
+        "default": default,
+        "message": text,
     }
     return prompt([args])["data"]
 
