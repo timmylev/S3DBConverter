@@ -18,6 +18,19 @@ SOURCE_BUCKET = "invenia-datafeeds-output"
 SOURCE_PREFIX = "version5/aurora/gz/"
 
 COMPRESSION = ["br", "gz", "lz4", "zst", "sz"]
+COMPRESSION_LEVELS = {
+    # Higher values are slower and have higher compression ratios.
+    "zst": range(-131072, 22 + 1),  # min: -131072, max: 22, default: 1
+    "br": range(0, 11 + 1),  # min: 0, max: 11, pyarrow default = 8
+    # Higher levels use more RAM but are faster and have higher compression ratios.
+    "gz": range(1, 9 + 1),  # min: 1, max: 9, pyarrow default = 9
+}
+# pyarrow defaults
+COMPRESSION_LEVELS_DEFAULTS = {
+    "zst": 1,
+    "br": 8,
+    "gz": 9,
+}
 _PYARROW_ARG_TRANSLATION = {
     "br": "brotli",
     "gz": "gzip",
@@ -73,18 +86,23 @@ def copy_metadata_file(collection, dataset, dest_prefix):
     )
 
 
-def migrate_to_arrow(source_keys, file_start, dest_prefix, compression):
-    stream = _convert_to_arrow(source_keys, compression)
+def migrate_to_arrow(source_keys, file_start, dest_prefix, compression, level=None):
+    if level is not None and level not in COMPRESSION_LEVELS.get(compression, []):
+        raise ValueError(f"Invalid compression level {level} for {compression}")
+
+    table = _get_arrow_table(source_keys)
+    show_memory("loaded all tables")
+
+    stream = _write_to_stream(table, compression, level)
+    show_memory("written to compressed stream")
 
     coll, ds = source_keys[0].removeprefix(SOURCE_PREFIX).split("/")[:2]
     dest_key = _gen_dest_key(file_start, coll, ds, dest_prefix, compression)
 
-    # _s3_multi_p_upload(SOURCE_BUCKET, dest_key, stream)
-
-    S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
+    _s3_multi_p_upload(SOURCE_BUCKET, dest_key, stream)
 
 
-def _convert_to_arrow(source_keys, compression):
+def _get_arrow_table(source_keys):
     def download(i, k):
         data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
         table = csv.read_csv(gzip.open(data))
@@ -98,18 +116,27 @@ def _convert_to_arrow(source_keys, compression):
         tables = [r for r in executor.map(download, idx, source_keys)]
 
     table = pa.concat_tables(tables, promote=True)
-    show_memory("loaded all tables")
 
     not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
     schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
     table.cast(schema)
 
-    cdec = _PYARROW_ARG_TRANSLATION.get(compression, compression)
+    return table
+
+
+def _write_to_stream(table, compression, level=None):
+    codec_key = _PYARROW_ARG_TRANSLATION.get(compression, compression)
+    codec = pa.Codec(codec_key, compression_level=level)
+
     sink = io.BytesIO()
 
     # on-the-fly compression is way more memory efficient, but only possible for
     # zst and lz4
-    cfg = pa.ipc.IpcWriteOptions(compression=cdec) if cdec in ("zstd", "lz4") else None
+    if codec_key in ("zstd", "lz4"):
+        cfg = pa.ipc.IpcWriteOptions(compression=codec)
+    else:
+        cfg = None
+
     with pa.ipc.new_stream(sink, table.schema, options=cfg) as writer:
         writer.write(table)
 
@@ -117,10 +144,8 @@ def _convert_to_arrow(source_keys, compression):
 
     # for non zst/lz4 compressions, uses much higher memory overall
     if cfg is None:
-        data = pa.compress(sink.getvalue(), codec=cdec, asbytes=True)
+        data = codec.compress(sink.getvalue(), asbytes=True)
         sink = io.BytesIO(data)
-
-    show_memory("compressed arrow stream")
 
     return sink  # can be a stream or bytes
 

@@ -2,13 +2,18 @@ import json
 import os
 import sys
 from enum import Enum
-from typing import Optional
 
 import boto3
 from PyInquirer import Separator, prompt
 
 from deploy import STACK_NAME
-from lambdas.common import COMPRESSION, list_collections, list_datasets
+from lambdas.common import (
+    COMPRESSION,
+    COMPRESSION_LEVELS,
+    COMPRESSION_LEVELS_DEFAULTS,
+    list_collections,
+    list_datasets,
+)
 
 
 PROD_ACCOUNT = 516256908252
@@ -59,13 +64,17 @@ class API:
 
         return self._stack_outputs
 
-    def trigger_lambda(self, dest_prefix, compression, partition, datasets):
+    def trigger_lambda(
+        self, dest_prefix, compression, partition, datasets, compression_level=None
+    ):
         event = {
             "dest_prefix": dest_prefix,
             "compression": compression,
             "partition": partition,
             "datasets": datasets,
         }
+        if compression_level:
+            event[compression_level] = compression_level
 
         self.lmb.invoke(
             FunctionName=self.stack_outputs["RequestGeneratorFunctionName"],
@@ -76,6 +85,18 @@ class API:
 
 def prompt_backfills(api):
     compression = prompt_options("Select dest compression:", COMPRESSION)
+
+    if compression in COMPRESSION_LEVELS:
+        levels = COMPRESSION_LEVELS[compression]
+        validate = lambda x: int(x) in levels
+        msg = f"Select compression level ({min(levels)} to {max(levels)}):"
+        default = COMPRESSION_LEVELS_DEFAULTS[compression]
+        compression_level = int(prompt_text(msg, default, validate))
+        codec_str = f"{compression}_lv{compression_level}"
+    else:
+        compression_level = None
+        codec_str = compression
+
     partition = prompt_options("Select dest partition:", PARTITIONS)
 
     if partition == "year":
@@ -86,7 +107,7 @@ def prompt_backfills(api):
 
     dest_prefix = prompt_text(
         "Specify dest s3 prefix",
-        default="/".join(["version5", "arrow", compression, partition, ""]),
+        default="/".join(["version5", "arrow", codec_str, partition, ""]),
     )
     dest_prefix = os.path.join(dest_prefix, "")
 
@@ -120,12 +141,18 @@ def prompt_backfills(api):
 
         for coll, ds in targets.items():
             if ds:
-                api.trigger_lambda(dest_prefix, compression, partition, {coll: ds})
+                api.trigger_lambda(
+                    dest_prefix,
+                    compression,
+                    partition,
+                    {coll: ds},
+                    compression_level=compression_level,
+                )
 
         print(" Done")
 
 
-def prompt_text(text: str, default: Optional[str] = None) -> str:
+def prompt_text(text, default=None, validate=None) -> str:
     args = {
         "name": "data",
         "type": "input",
@@ -133,6 +160,8 @@ def prompt_text(text: str, default: Optional[str] = None) -> str:
     }
     if default:
         args["default"] = default
+    if validate:
+        args["validate"] = validate
     return prompt([args])["data"]
 
 
