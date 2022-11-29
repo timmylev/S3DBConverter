@@ -57,7 +57,7 @@ class API:
             outputs = resp["Stacks"][0]["Outputs"]
             self._stack_outputs = {el["OutputKey"]: el["OutputValue"] for el in outputs}
 
-        return self._retriever_outputs
+        return self._stack_outputs
 
     def trigger_lambda(self, dest_prefix, compression, partition, datasets):
         event = {

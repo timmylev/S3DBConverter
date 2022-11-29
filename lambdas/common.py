@@ -79,9 +79,9 @@ def migrate_to_arrow(source_keys, file_start, dest_prefix, compression):
     coll, ds = source_keys[0].removeprefix(SOURCE_PREFIX).split("/")[:2]
     dest_key = _gen_dest_key(file_start, coll, ds, dest_prefix, compression)
 
-    _s3_multi_p_upload(SOURCE_BUCKET, dest_key, stream)
+    # _s3_multi_p_upload(SOURCE_BUCKET, dest_key, stream)
 
-    # S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
+    S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
 
 
 def _convert_to_arrow(source_keys, compression):
