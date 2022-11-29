@@ -119,7 +119,7 @@ def _get_arrow_table(source_keys):
 
     not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
     schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
-    table.cast(schema)
+    table = table.cast(schema)
 
     return table
 
