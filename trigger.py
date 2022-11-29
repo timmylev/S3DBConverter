@@ -74,7 +74,7 @@ class API:
             "datasets": datasets,
         }
         if compression_level:
-            event[compression_level] = compression_level
+            event["compression_level"] = compression_level
 
         self.lmb.invoke(
             FunctionName=self.stack_outputs["RequestGeneratorFunctionName"],
