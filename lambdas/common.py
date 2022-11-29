@@ -1,3 +1,4 @@
+import concurrent.futures
 import gzip
 import io
 import json
@@ -8,6 +9,7 @@ from itertools import islice
 import boto3
 import psutil
 import pyarrow as pa
+from boto3.s3.transfer import TransferConfig
 from pyarrow import csv
 
 
@@ -15,7 +17,7 @@ from pyarrow import csv
 SOURCE_BUCKET = "invenia-datafeeds-output"
 SOURCE_PREFIX = "version5/aurora/gz/"
 
-COMPRESSION = ["br", "bz2", "gz", "lz4", "zst", "sz"]
+COMPRESSION = ["br", "gz", "lz4", "zst", "sz"]
 _PYARROW_ARG_TRANSLATION = {
     "br": "brotli",
     "gz": "gzip",
@@ -24,6 +26,9 @@ _PYARROW_ARG_TRANSLATION = {
 }
 
 S3_CLIENT = boto3.client("s3")
+# Default multi-part config:
+# https://boto3.amazonaws.com/v1/documentation/api/latest/reference/customizations/s3.html#module-boto3.s3.inject
+S3_CONFIG = TransferConfig()
 
 
 def list_collections():
@@ -74,18 +79,23 @@ def migrate_to_arrow(source_keys, file_start, dest_prefix, compression):
     coll, ds = source_keys[0].removeprefix(SOURCE_PREFIX).split("/")[:2]
     dest_key = _gen_dest_key(file_start, coll, ds, dest_prefix, compression)
 
-    S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
+    _s3_multi_p_upload(SOURCE_BUCKET, dest_key, stream)
+
+    # S3_CLIENT.put_object(Bucket=SOURCE_BUCKET, Key=dest_key, Body=stream)
 
 
 def _convert_to_arrow(source_keys, compression):
-    download = lambda k: S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
+    def download(i, k):
+        data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
+        table = csv.read_csv(gzip.open(data))
+        show_memory(f"loaded table {i}")
+        return table
 
-    tables = []
     # for large datasets such as caiso prices, aws lambda hits max memory (10gb)
     # at around 250 files/days, so we probably can't use lambda to batch yearly files.
-    for i, key in enumerate(source_keys):
-        tables.append(csv.read_csv(gzip.open(download(key))))
-        show_memory(f"loaded table {i+1}")
+    with concurrent.futures.ThreadPoolExecutor(10) as executor:
+        idx = range(1, len(source_keys) + 1)
+        tables = [r for r in executor.map(download, idx, source_keys)]
 
     table = pa.concat_tables(tables, promote=True)
     show_memory("loaded all tables")
@@ -105,11 +115,12 @@ def _convert_to_arrow(source_keys, compression):
 
     sink.seek(0)
 
-    # for non zst/lz4 compressions
+    # for non zst/lz4 compressions, uses much higher memory overall
     if cfg is None:
-        sink = pa.compress(sink.getvalue(), codec=cdec, asbytes=True)
+        data = pa.compress(sink.getvalue(), codec=cdec, asbytes=True)
+        sink = io.BytesIO(data)
 
-    show_memory("compressed")
+    show_memory("compressed arrow stream")
 
     return sink  # can be a stream or bytes
 
@@ -132,6 +143,17 @@ def _s3_list(bucket, prefix, dirs_only=False):
         )
     else:
         yield from (i["Key"] for p in pg.paginate(**arg) for i in p.get("Contents", ()))
+
+
+def _s3_multi_p_upload(bucket, s3_key, file_obj):
+    extra_args = {"ACL": "bucket-owner-full-control"}
+    S3_CLIENT.upload_fileobj(
+        Bucket=bucket,
+        Key=s3_key,
+        Fileobj=file_obj,
+        Config=S3_CONFIG,
+        ExtraArgs=extra_args,
+    )
 
 
 def _gen_dest_key(file_start, coll, ds, dest_prefix, compression):
