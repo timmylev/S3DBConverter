@@ -90,7 +90,7 @@ def prompt_backfills(api):
         levels = COMPRESSION_LEVELS[compression]
         validate = lambda x: int(x) in levels
         msg = f"Select compression level ({min(levels)} to {max(levels)}):"
-        default = COMPRESSION_LEVELS_DEFAULTS[compression]
+        default = str(COMPRESSION_LEVELS_DEFAULTS[compression])
         compression_level = int(prompt_text(msg, default, validate))
         codec_str = f"{compression}_lv{compression_level}"
     else:
