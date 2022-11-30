@@ -149,7 +149,7 @@ Resources:
         S3Key: !Ref CodeS3Key
       Description: A Lambda function to handle requests.
       Handler: lambdas/request_handler.lambda_handler
-      MemorySize: 1024
+      MemorySize: 2048
       Role: !GetAtt LambdaFunctionRole.Arn
       Runtime: !Ref PythonVersion
       Timeout: 900  # 15 mins
