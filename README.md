@@ -19,15 +19,10 @@ pip install -r requirements-trigger.txt
 export AWS_DEFAULT_PROFILE=production:admin
 python trigger.py
 ```
+Note that generated/converted datasets will not automatically receive new prod data.
 
 ## Deploy / Update
 ```
 export AWS_DEFAULT_PROFILE=production:admin
 python deploy.py
 ```
-
-## TODO:
-1. prod listeners
-2. convert lists, tuples, and bools
-3. support parquet
-4. concurrent downloads
