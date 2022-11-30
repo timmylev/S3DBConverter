@@ -89,15 +89,8 @@ def migrate_to_arrow(source_keys, file_start, dest_prefix, compression, level=No
     if level is not None and level not in COMPRESSION_LEVELS.get(compression, []):
         raise ValueError(f"Invalid compression level {level} for {compression}")
 
-    # TODO: it may be possible to write the table in 24-hr chunks as they are retrieved
-    # instead of all in one go, this may help us address the memory issue for yearly
-    # batches.
-
     table = _get_arrow_table(source_keys)
-    show_memory("loaded all tables")
-
     data = _compress_to_bytes(table, compression, level)
-    show_memory("written to compressed bytes")
 
     coll, ds = source_keys[0].removeprefix(SOURCE_PREFIX).split("/")[:2]
     dest_key = _gen_dest_key(file_start, coll, ds, dest_prefix, compression)
@@ -123,6 +116,7 @@ def _get_arrow_table(source_keys):
     not_nulls = [k for k in table.column_names if table.column(k).null_count == 0]
     schema = pa.schema([f.with_nullable(f.name not in not_nulls) for f in table.schema])
     table = table.cast(schema)
+    show_memory("loaded all tables")
 
     return table
 
@@ -132,9 +126,14 @@ def _compress_to_bytes(table, compression, level=None):
     with pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write(table)
 
+    show_memory("written table to byte stream")
+
     codec_key = _PYARROW_ARG_TRANSLATION.get(compression, compression)
     codec = pa.Codec(codec_key, compression_level=level)
-    return codec.compress(sink.getvalue(), asbytes=True)
+    data = codec.compress(sink.getvalue(), asbytes=True)
+    show_memory("compressed byte stream")
+
+    return data
 
 
 def batch_items(itr, chunk_size):
