@@ -8,8 +8,54 @@ Parameters:
     Type: String
   CodeS3Key:
     Type: String
+  S3DBBucket:
+    Type: String
+  S3DBProdPrefix:
+    Type: String
+  S3DBBucketSNS:
+    Type: String
+  S3DBBucketSNSFilter:
+    Type: String
 
 Resources:
+  S3DBBucketSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt LiveJobSQS.Arn
+      FilterPolicy: !Ref S3DBBucketSNSFilter
+      Protocol: sqs
+      TopicArn: !Ref S3DBBucketSNS
+
+  LiveJobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  LiveJobSQS:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 86400  # 24 hr
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt LiveJobDLQ.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 3000
+
+  LiveJobSQSPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: sqs:SendMessage
+            Resource: !GetAtt LiveJobSQS.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref S3DBBucketSNS
+      Queues:
+        - !Ref LiveJobSQS
+
   SingleJobDLQ:
     Type: AWS::SQS::Queue
     Properties:
@@ -59,13 +105,13 @@ Resources:
                   - s3:ListBucket
                 Effect: Allow
                 Resource:
-                  - !Sub arn:aws:s3:::invenia-datafeeds-output
+                  - !Sub arn:aws:s3:::${S3DBBucket}
               - Action:
                   - s3:GetObject*
                   - s3:PutObject*
                 Effect: Allow
                 Resource:
-                  - !Sub arn:aws:s3:::invenia-datafeeds-output/*
+                  - !Sub arn:aws:s3:::${S3DBBucket}/*
               - Action:
                   - sqs:ReceiveMessage
                   - sqs:SendMessage
@@ -76,6 +122,7 @@ Resources:
                 Resource:
                   - !GetAtt SingleJobSQS.Arn
                   - !GetAtt BatchJobSQS.Arn
+                  - !GetAtt LiveJobSQS.Arn
 
   RequestGeneratorFunction:
     Type: AWS::Lambda::Function
@@ -135,6 +182,30 @@ Resources:
       Enabled: true
       EventSourceArn: !GetAtt BatchJobSQS.Arn
       FunctionName: !GetAtt BatchJobRequestHandlerFunction.Arn
+
+  ProdListenerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Description: A Lambda function to listen to prod events.
+      Handler: lambdas/prod_listener.lambda_handler
+      Environment:
+        Variables:
+          SINGLE_JOB_SQS_URL: !Ref SingleJobSQS
+      MemorySize: 128
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Runtime: !Ref PythonVersion
+      Timeout: 30
+
+  ProdListenerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1  # max: 10
+      Enabled: true
+      EventSourceArn: !GetAtt LiveJobSQS.Arn
+      FunctionName: !GetAtt ProdListenerFunction.Arn
 
 Outputs:
   RequestGeneratorFunctionName:

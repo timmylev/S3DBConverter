@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,21 @@ CFN_TEMPLATE = BASE_DIR / "template.yaml"
 
 CODE_BUCKET = "invenia-datafeeds-code"
 STACK_NAME = "S3DBConverter"
+
+S3DB_BUCKET = "invenia-datafeeds-output"
+S3DB_BUCKET_PREFIX = "version5/aurora/gz/"
+S3DB_BUCKET_SNS = "arn:aws:sns:us-east-1:516256908252:invenia-datafeeds-output-topic-BucketTopic-AHM26GG3AE5J"  # noqa
+S3DB_COLLECTIONS = [
+    "caiso",
+    "datasoup",
+    "ercot",
+    "miso",
+    "iso_ne",
+    "nyiso",
+    "spp",
+    "pjm",
+    "weather",
+]
 
 
 def main():
@@ -53,6 +69,10 @@ def create_stack(stackname, bucket, key):
             {"ParameterKey": "PythonVersion", "ParameterValue": f"python{PY_VER}"},
             {"ParameterKey": "CodeS3Bucket", "ParameterValue": bucket},
             {"ParameterKey": "CodeS3Key", "ParameterValue": key},
+            {"ParameterKey": "S3DBBucket", "ParameterValue": S3DB_BUCKET},
+            {"ParameterKey": "S3DBProdPrefix", "ParameterValue": S3DB_BUCKET_PREFIX},
+            {"ParameterKey": "S3DBBucketSNS", "ParameterValue": S3DB_BUCKET_SNS},
+            {"ParameterKey": "S3DBBucketSNSFilter", "ParameterValue": sns_filter()},
         ],
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
     }
@@ -67,6 +87,15 @@ def create_stack(stackname, bucket, key):
     print(f"Waiting on {opr} completion... killing this won't do anything")
     client.get_waiter(f"stack_{opr}_complete").wait(StackName=stackname)
     print("Done")
+
+
+def sns_filter():
+    prefixes = [f"{S3DB_BUCKET_PREFIX}{c}/" for c in S3DB_COLLECTIONS]
+    policy = {
+        "S3Key": [{"prefix": p} for p in prefixes],
+        "EventName": [{"prefix": "ObjectCreated"}],
+    }
+    return json.dumps(policy)
 
 
 if __name__ == "__main__":
