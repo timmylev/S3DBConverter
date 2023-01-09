@@ -9,6 +9,7 @@ SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
 SINGLE_JOB_SQS_URL = os.environ["SINGLE_JOB_SQS_URL"]
 
+# define file conversion jobs here.
 DEST_STORES = [
     {
         "dest_prefix": "version5/arrow/zst_lv22/day/",
@@ -19,6 +20,10 @@ DEST_STORES = [
 
 
 def lambda_handler(event, context):
+    """Prod listener function
+    This lambda function receives new file and updated file events from the prod S3DB
+    bucket + prefix. FIle conversion requests are generated based on these live events.
+    """
     print(f"Event: {event}")
 
     for message in event["Records"]:

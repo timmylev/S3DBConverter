@@ -4,18 +4,25 @@ Description: S3DB Converter
 Parameters:
   PythonVersion:
     Type: String
+    Description: Python version to use for lambda functions
   CodeS3Bucket:
     Type: String
+    Description: S3 Bucket containing the lambda code bundle
   CodeS3Key:
     Type: String
+    Description: S3 Key of the lambda code bundle
   S3DBBucket:
     Type: String
+    Description: The production datafeeds transmuter output bucket, i.e. source data
   S3DBProdPrefix:
     Type: String
+    Description: The production datafeeds transmuter output bucket prefix
   S3DBBucketSNS:
     Type: String
+    Description: The production SNS Topic that publishes new/updated S3 file events in the S3DBBucket
   S3DBBucketSNSFilter:
     Type: String
+    Description: The subscription filter to use for the S3DBBucketSNS, this should be based off the S3DBProdPrefix
 
 Resources:
   S3DBBucketSubscription:
@@ -31,6 +38,7 @@ Resources:
     Properties:
       MessageRetentionPeriod: 1209600 # 14 days
 
+  # Live prod events are sent here
   LiveJobSQS:
     Type: AWS::SQS::Queue
     Properties:
@@ -61,6 +69,10 @@ Resources:
     Properties:
       MessageRetentionPeriod: 1209600 # 14 days
 
+  # Single-file backfill requests (by the request generator) are sent here.
+  # Datafeeds currently uses a daily partition, so single-file requests are used when
+  # generating daily partitions, where each source file maps to a single dest file,
+  # and no file repartitioning happens.
   SingleJobSQS:
     Type: AWS::SQS::Queue
     Properties:
@@ -75,6 +87,10 @@ Resources:
     Properties:
       MessageRetentionPeriod: 1209600 # 14 days
 
+  # Batch-file backfill requests (by the request generator) are sent here.
+  # Datafeeds currently uses a daily partition, so batch-file requests are used when
+  # generating monthly or yearly partitions, where  multiple source files are merged
+  # into a single dest file.
   BatchJobSQS:
     Type: AWS::SQS::Queue
     Properties:
@@ -126,6 +142,7 @@ Resources:
 
   RequestGeneratorFunction:
     Type: AWS::Lambda::Function
+    Description: The Lambda function used to generate backfill requests.
     Properties:
       Code:
         S3Bucket: !Ref CodeS3Bucket
@@ -141,8 +158,11 @@ Resources:
       Runtime: !Ref PythonVersion
       Timeout: 900  # 15 mins
 
+  # The Single Job Function and Batch Job Function runs the exact same code, but we
+  # split them up into 2 separate function to set a different memory requirement 
   SingleJobRequestHandlerFunction:
     Type: AWS::Lambda::Function
+    Description: The Lambda function used to process single-file backfill requests.
     Properties:
       Code:
         S3Bucket: !Ref CodeS3Bucket
@@ -162,8 +182,11 @@ Resources:
       EventSourceArn: !GetAtt SingleJobSQS.Arn
       FunctionName: !GetAtt SingleJobRequestHandlerFunction.Arn
 
+  # The Single Job Function and Batch Job Function runs the exact same code, but we
+  # split them up into 2 separate function to set a different memory requirement 
   BatchJobRequestHandlerFunction:
     Type: AWS::Lambda::Function
+    Description: The Lambda function used to process batch-file backfill requests.
     Properties:
       Code:
         S3Bucket: !Ref CodeS3Bucket
@@ -185,6 +208,8 @@ Resources:
 
   ProdListenerFunction:
     Type: AWS::Lambda::Function
+    Description: >-
+      The Lambda function that receives live prod event and generate a conversion request
     Properties:
       Code:
         S3Bucket: !Ref CodeS3Bucket

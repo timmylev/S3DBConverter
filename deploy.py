@@ -24,17 +24,6 @@ STACK_NAME = "S3DBConverter"
 S3DB_BUCKET = "invenia-datafeeds-output"
 S3DB_BUCKET_PREFIX = "version5/aurora/gz/"
 S3DB_BUCKET_SNS = "arn:aws:sns:us-east-1:516256908252:invenia-datafeeds-output-topic-BucketTopic-AHM26GG3AE5J"  # noqa
-S3DB_COLLECTIONS = [
-    "caiso",
-    "datasoup",
-    "ercot",
-    "miso",
-    "iso_ne",
-    "nyiso",
-    "spp",
-    "pjm",
-    "weather",
-]
 
 
 def main():
@@ -90,9 +79,8 @@ def create_stack(stackname, bucket, key):
 
 
 def sns_filter():
-    prefixes = [f"{S3DB_BUCKET_PREFIX}{c}/" for c in S3DB_COLLECTIONS]
     policy = {
-        "S3Key": [{"prefix": p} for p in prefixes],
+        "S3Key": [{"prefix": S3DB_BUCKET_PREFIX}],
         "EventName": [{"prefix": "ObjectCreated"}],
     }
     return json.dumps(policy)

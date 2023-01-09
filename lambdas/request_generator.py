@@ -26,6 +26,10 @@ SQS_BATCH_SIZE = 10
 
 
 def lambda_handler(event, context):
+    """Request Handler Function
+    Receives backfill requests and generates file conversion jobs, before sending them
+    off to the request handler function via SQS queues.
+    """
     print(f"Event: {event}")
     event = RequestGeneratorEvent(**event)
 
