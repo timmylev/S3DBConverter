@@ -10,7 +10,8 @@ SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
 SINGLE_JOB_SQS_URL = os.environ["SINGLE_JOB_SQS_URL"]
 
-# define file conversion jobs here.
+# define file conversion jobs here, currently only day-partitions are
+# supported for live conversions
 DEST_STORES = [
     {
         "dest_prefix": "version5/arrow/zst_lv22/day/",
@@ -32,15 +33,16 @@ def lambda_handler(event, context):
         s3_event = json.loads(unquote(sns_event["Message"]))
 
         s3_key = s3_event["s3"]["object"]["key"]
-
-        # if it's a metadata file, just copy it directly
-        if s3_key.endswith("METADATA.json"):
-            _, coll, ds, _ = s3_key.rsplit("/", 3)
-            for dest in DEST_STORES:
-                copy_metadata_file(coll, ds, dest["dest_prefix"])
+        _, coll, ds, _ = s3_key.rsplit("/", 3)
 
         for dest in DEST_STORES:
-            SQS_CLIENT.send_message(
-                QueueUrl=SINGLE_JOB_SQS_URL,
-                MessageBody=json.dumps({"s3_key": s3_key, **dest}),
-            )
+            # if it's a metadata file, just copy it directly
+            if s3_key.endswith("METADATA.json"):
+                copy_metadata_file(coll, ds, dest["dest_prefix"])
+
+            # trigger a conversion job
+            else:
+                SQS_CLIENT.send_message(
+                    QueueUrl=SINGLE_JOB_SQS_URL,
+                    MessageBody=json.dumps({"s3_key": s3_key, **dest}),
+                )
