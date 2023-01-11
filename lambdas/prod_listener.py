@@ -4,6 +4,7 @@ from urllib.parse import unquote
 
 import boto3
 
+from lambdas.common import copy_metadata_file
 
 SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
@@ -31,6 +32,12 @@ def lambda_handler(event, context):
         s3_event = json.loads(unquote(sns_event["Message"]))
 
         s3_key = s3_event["s3"]["object"]["key"]
+
+        # if it's a metadata file, just copy it directly
+        if s3_key.endswith("METADATA.json"):
+            _, coll, ds, _ = s3_key.rsplit("/", 3)
+            for dest in DEST_STORES:
+                copy_metadata_file(coll, ds, dest["dest_prefix"])
 
         for dest in DEST_STORES:
             SQS_CLIENT.send_message(
