@@ -4,7 +4,7 @@ from urllib.parse import unquote
 
 import boto3
 
-from lambdas.common import migrate_to_arrow
+from lambdas.common import migrate_data
 
 
 S3_CLIENT = boto3.client("s3")
@@ -31,18 +31,26 @@ def lambda_handler(event, context):
         compression = event["compression"]
         level = event.get("compression_level")
         dest_prefix = event["dest_prefix"]
+        dest_store = event["dest_store"]
+        partition_size = event["partition_size"]
+        file_format = event["file_format"]
 
-        # single file conversion requests payload
+        # live events
         if "s3_key" in event:
             s3keys = [event["s3_key"]]
-            _, filename = event["s3_key"].rsplit("/", 1)
-            file_start = int(filename.split(".")[0])
 
-        # batch file conversion requests payload
+        # backfill requests
         else:
-            file_start = event["file_start"]
             s3key_prefix = event["s3key_prefix"]
             s3key_suffixes = event["s3key_suffixes"]
             s3keys = [os.path.join(s3key_prefix, i) for i in s3key_suffixes]
 
-        migrate_to_arrow(s3keys, file_start, dest_prefix, compression, level)
+        migrate_data(
+            s3keys,
+            dest_prefix,
+            dest_store,
+            partition_size,
+            file_format,
+            compression,
+            level=level,
+        )

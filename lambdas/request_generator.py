@@ -1,7 +1,5 @@
 import json
 import os
-from datetime import timezone
-from itertools import groupby
 from typing import Optional
 
 import boto3
@@ -10,11 +8,13 @@ from pydantic import BaseModel, validator
 from lambdas.common import (
     COMPRESSION,
     COMPRESSION_LEVELS,
+    DEST_STORES,
+    FILE_FORMATS,
+    PARTITION_SIZES,
     SOURCE_PREFIX,
     batch_items,
     copy_metadata_file,
-    extract_datetime,
-    floor_dt,
+    group_s3keys_by_partition,
     list_collections,
     list_datasets,
     list_keys,
@@ -35,19 +35,15 @@ def lambda_handler(event, context):
 
     for coll, dss in event.datasets.items():
         for ds in dss:
-            copy_metadata_file(coll, ds, event.dest_prefix)
-
-            if event.partition == "day":
+            if event.partition_size in ("hour", "day"):
                 sqs_url = os.environ["SINGLE_JOB_SQS_URL"]
-
-            elif event.partition in ("month", "year"):
+            else:
                 sqs_url = os.environ["BATCH_JOB_SQS_URL"]
 
-            else:
-                raise Exception(f"Unknown period {event.partition}")
+            if event.dest_store == "dataclient":
+                copy_metadata_file(coll, ds, event.dest_prefix)
 
             items = list(generate_requests(coll, ds, event))
-
             print(f"Submitting {len(items)} requests for '{coll}-{ds}'...")
 
             for batch in batch_items(items, SQS_BATCH_SIZE):
@@ -61,18 +57,21 @@ def lambda_handler(event, context):
 
 
 def generate_requests(collection, dataset, event):
-    prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
-    s3_keys = sorted(list_keys(collection, dataset))
+    s3_keys = list_keys(collection, dataset)
     print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
-    gk_func = lambda key: floor_dt(extract_datetime(key), event.partition)
-    for gk, keys in groupby(s3_keys, key=gk_func):
+    prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
+
+    for gk, keys in group_s3keys_by_partition(s3_keys, event.partition_size):
+        # remove the prefix to reduce payload size
         keys = [k.removeprefix(prefix) for k in keys]
         request = {
-            "file_start": int(gk.replace(tzinfo=timezone.utc).timestamp()),
             "s3key_prefix": prefix,
             "s3key_suffixes": keys,
             "compression": event.compression,
             "dest_prefix": event.dest_prefix,
+            "partition_size": event.partition_size,
+            "dest_store": event.dest_store,
+            "file_format": event.file_format,
         }
         if event.compression_level is not None:
             request["compression_level"] = event.compression_level
@@ -80,12 +79,15 @@ def generate_requests(collection, dataset, event):
         yield request
 
 
+# main purpose of this is to validate user inputs
 class RequestGeneratorEvent(BaseModel):
     datasets: dict[str, list[str]]
     dest_prefix: str
     compression: str
     compression_level: Optional[int] = None
-    partition: str = "day"
+    partition_size: str = "day"
+    dest_store: str = "dataclient"
+    file_format: str = "arrow"
 
     @validator("datasets")
     def datasets_exist(cls, v):
@@ -117,4 +119,22 @@ class RequestGeneratorEvent(BaseModel):
         codec = values["compression"]
         if v is not None and v not in COMPRESSION_LEVELS.get(codec, []):
             raise ValueError(f"Invalid compression level {v} for {codec}")
+        return v
+
+    @validator("partition_size")
+    def valid_partition_size(cls, v):
+        if v not in PARTITION_SIZES:
+            raise ValueError(f"Invalid partition size {v}")
+        return v
+
+    @validator("dest_store")
+    def valid_dest_store(cls, v):
+        if v not in DEST_STORES:
+            raise ValueError(f"Invalid dest_store {v}")
+        return v
+
+    @validator("file_format")
+    def valid_file_format(cls, v):
+        if v not in FILE_FORMATS:
+            raise ValueError(f"Invalid file_format {v}")
         return v
