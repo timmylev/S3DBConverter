@@ -2,8 +2,12 @@ flake8
 isort
 black
 boto3
+moto[s3]
+mypy
+pandas
 pyarrow
 pydantic
 plz
 PyInquirer
 psutil
+pytest

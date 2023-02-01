@@ -5,12 +5,13 @@ import json
 import os
 from datetime import datetime, timezone
 from itertools import groupby, islice
+from typing import Iterable, Iterator, Optional
 
 import boto3
 import psutil
 import pyarrow as pa
 from boto3.s3.transfer import TransferConfig
-from pyarrow import csv
+from pyarrow import csv, parquet as pq
 
 
 # non-versioned bucket
@@ -41,45 +42,52 @@ DEST_STORES = ["athena", "dataclient"]
 FILE_FORMATS = ["arrow", "parquet"]
 PARTITION_SIZES = ["hour", "day", "month", "year"]
 
+SQS_CLIENT = boto3.client("sqs")
 S3_CLIENT = boto3.client("s3")
 # Default multi-part config:
 # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/customizations/s3.html#module-boto3.s3.inject
 S3_CONFIG = TransferConfig()
 
 
-def list_collections():
+def refresh_clients():
+    global S3_CLIENT, SQS_CLIENT
+    S3_CLIENT = boto3.client("s3")
+    SQS_CLIENT = boto3.client("sqs")
+
+
+def list_collections() -> list[str]:
     coll_prefixes = _s3_list(SOURCE_BUCKET, SOURCE_PREFIX, dirs_only=True)
     return [c.split("/")[-2] for c in coll_prefixes]
 
 
-def list_datasets(collection):
+def list_datasets(collection: str) -> list[str]:
     prefix = os.path.join(SOURCE_PREFIX, collection, "")
     ds_prefixes = _s3_list(SOURCE_BUCKET, prefix, dirs_only=True)
     return [d.split("/")[-2] for d in ds_prefixes]
 
 
-def list_keys(collection, dataset):
+def list_keys(collection: str, dataset: str) -> Iterator[str]:
     prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
     yield from (i for i in _s3_list(SOURCE_BUCKET, prefix) if i.endswith(".csv.gz"))
 
 
-def gen_metadata_key(collection, dataset):
+def gen_metadata_key(collection: str, dataset: str) -> str:
     return os.path.join(SOURCE_PREFIX, collection, dataset, "METADATA.json")
 
 
-def get_dataset_pkeys(collection, dataset):
+def get_dataset_pkeys(collection: str, dataset: str) -> list[str]:
     key = gen_metadata_key(collection, dataset)
     meta = json.load(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
     return meta["superkey"]
 
 
-def extract_datetime(s3_key):
+def extract_datetime(s3_key: str) -> datetime:
     filename = s3_key.rsplit("/", 1)[-1]
     ts = int(filename.split(".")[0])
     return datetime.fromtimestamp(ts, timezone.utc)
 
 
-def copy_metadata_file(collection, dataset, dest_prefix):
+def copy_metadata_file(collection: str, dataset: str, dest_prefix: str):
     key = gen_metadata_key(collection, dataset)
     desk_key = os.path.join(dest_prefix, key.removeprefix(SOURCE_PREFIX))
     S3_CLIENT.copy_object(
@@ -89,15 +97,15 @@ def copy_metadata_file(collection, dataset, dest_prefix):
     )
 
 
-def migrate_data(
-    source_keys,
-    dest_prefix,
-    dest_store,
-    partition_size,
-    file_format,
-    compression,
-    level=None,
-):
+def convert_data(
+    source_keys: list[str],
+    dest_prefix: str,
+    dest_store: str,
+    partition_size: str,
+    file_format: str,
+    compression: str,
+    level: Optional[int] = None,
+) -> Iterator[tuple[str, bytes]]:
     for ts, coll, ds, table in load_as_partitions(source_keys, partition_size):
         if dest_store == "athena":
             if file_format != "parquet":
@@ -113,23 +121,31 @@ def migrate_data(
             )
             key = _gen_s3db_key(ts, coll, ds, dest_prefix, file_format, compression)
 
-        _s3_multi_p_upload(SOURCE_BUCKET, key, io.BytesIO(data))
+        yield key, data
 
 
-def load_as_partitions(source_keys, partition_size):
+def load_as_partitions(
+    source_keys: list[str], partition_size: str
+) -> Iterator[tuple[int, str, str, pa.Table]]:
     for gk, s3keys in group_s3keys_by_partition(source_keys, partition_size):
         coll, ds, file_start = gk
         table = _get_arrow_table(s3keys)
 
         # for hourly partitions, we'll have to further split the file/table
         if partition_size == "hour":
-            # TODO: partition table by hour
-            yield file_start, coll, ds, table
+            # convert to pandas to use DF.groupby
+            table = table.to_pandas()
+            key_fn = lambda ts: ts - (ts % 3600)  # round down hour
+            table["pk"] = list(map(key_fn, table.target_start))
+            grouped = table.groupby("pk")
+            for file_key, df in grouped:
+                t = pa.Table.from_pandas(df.drop(columns="pk"), preserve_index=False)
+                yield file_key, coll, ds, t
         else:
             yield file_start, coll, ds, table
 
 
-def _get_arrow_table(source_keys):
+def _get_arrow_table(source_keys: list[str]) -> pa.Table:
     def download(i, k):
         data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
         table = csv.read_csv(gzip.open(data))
@@ -152,12 +168,17 @@ def _get_arrow_table(source_keys):
     return table
 
 
-def _compress_to_bytes(table, compression, level=None, to_parquet=False):
+def _compress_to_bytes(
+    table: pa.Table,
+    compression: str,
+    level: Optional[int] = None,
+    to_parquet: bool = False,
+) -> bytes:
     sink = io.BytesIO()
     codec_key = _PYARROW_ARG_TRANSLATION.get(compression, compression)
 
     if to_parquet:
-        pa.parquet.write_table(table, sink, compression=codec_key)
+        pq.write_table(table, sink, compression=codec_key)
         data = sink.getvalue()
 
     else:
@@ -174,7 +195,7 @@ def _compress_to_bytes(table, compression, level=None, to_parquet=False):
     return data
 
 
-def batch_items(itr, chunk_size):
+def batch_items(itr: Iterable, chunk_size: int):
     itr = iter(itr)
     chunk = list(islice(itr, chunk_size))
     while chunk:
@@ -182,7 +203,7 @@ def batch_items(itr, chunk_size):
         chunk = list(islice(itr, chunk_size))
 
 
-def _s3_list(bucket, prefix, dirs_only=False):
+def _s3_list(bucket: str, prefix: str, dirs_only: bool = False) -> Iterator[str]:
     pg = S3_CLIENT.get_paginator("list_objects_v2")
     arg = {"Bucket": bucket, "Prefix": prefix}
     if dirs_only:
@@ -194,7 +215,7 @@ def _s3_list(bucket, prefix, dirs_only=False):
         yield from (i["Key"] for p in pg.paginate(**arg) for i in p.get("Contents", ()))
 
 
-def _s3_multi_p_upload(bucket, s3_key, file_obj):
+def s3_multi_p_upload(bucket: str, s3_key: str, file_obj):
     extra_args = {"ACL": "bucket-owner-full-control"}
     S3_CLIENT.upload_fileobj(
         Bucket=bucket,
@@ -205,13 +226,20 @@ def _s3_multi_p_upload(bucket, s3_key, file_obj):
     )
 
 
-def _gen_s3db_key(file_start, coll, ds, dest_prefix, file_format, compression):
+def _gen_s3db_key(
+    file_start: int,
+    coll: str,
+    ds: str,
+    dest_prefix: str,
+    file_format: str,
+    compression: str,
+) -> str:
     year = datetime.fromtimestamp(file_start, timezone.utc).year
     filename = f"year={year}/{file_start}.{file_format}.{compression}"
     return os.path.join(dest_prefix, coll, ds, filename)
 
 
-def _gen_athena_key(file_start, coll, ds, dest_prefix):
+def _gen_athena_key(file_start: int, coll: str, ds: str, dest_prefix: str) -> str:
     # https://docs.aws.amazon.com/athena/latest/ug/partition-projection-supported-types.html
     dt_fmt = "%d-%m-%Y-%H-%M-%S"
     partition_val = datetime.fromtimestamp(file_start, timezone.utc).strftime(dt_fmt)
@@ -219,18 +247,20 @@ def _gen_athena_key(file_start, coll, ds, dest_prefix):
     return os.path.join(dest_prefix, coll, ds, filename)
 
 
-def group_s3keys_by_partition(source_keys, partition_size):
-    def gk_func(key):
+def group_s3keys_by_partition(
+    source_keys: list[str], partition_size: str
+) -> Iterator[tuple[tuple[str, str, int], list[str]]]:
+    def gk_func(key: str) -> tuple[str, str, int]:
         coll, ds = key.removeprefix(SOURCE_PREFIX).split("/")[:2]
         file_start = floor_dt(extract_datetime(key), partition_size)
-        return coll, ds, file_start
+        return coll, ds, int(file_start.timestamp())
 
     source_keys.sort()
     for gk, keys in groupby(source_keys, key=gk_func):
-        yield gk, keys
+        yield gk, list(keys)
 
 
-def floor_dt(dt, period):
+def floor_dt(dt: datetime, period: str):
     if period == "hour":
         return datetime(dt.year, dt.month, dt.day, dt.hour)
     elif period == "day":
@@ -243,7 +273,7 @@ def floor_dt(dt, period):
         raise Exception(f"invalid period: {period}")
 
 
-def show_memory(text):
+def show_memory(text: str):
     process = psutil.Process(os.getpid())
     mb = process.memory_info().rss / 1_000_000
     print(f"{text}: {mb}MB")

@@ -2,12 +2,9 @@ import json
 import os
 from urllib.parse import unquote
 
-import boto3
-
-from lambdas.common import copy_metadata_file
+from lambdas.common import SOURCE_PREFIX, SQS_CLIENT, copy_metadata_file
 
 
-SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
 SINGLE_JOB_SQS_URL = os.environ["SINGLE_JOB_SQS_URL"]
 
@@ -36,7 +33,8 @@ def lambda_handler(event, context):
         s3_event = json.loads(unquote(sns_event["Message"]))
 
         s3_key = s3_event["s3"]["object"]["key"]
-        _, coll, ds, _ = s3_key.rsplit("/", 3)
+
+        coll, ds, _ = s3_key.removeprefix(SOURCE_PREFIX).split("/", 2)
 
         for dest in DEST_STORES:
             partition_type = dest["partition_type"]

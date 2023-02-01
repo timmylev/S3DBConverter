@@ -1,13 +1,9 @@
+import io
 import json
 import os
 from urllib.parse import unquote
 
-import boto3
-
-from lambdas.common import migrate_data
-
-
-S3_CLIENT = boto3.client("s3")
+from lambdas.common import SOURCE_BUCKET, convert_data, s3_multi_p_upload
 
 
 def lambda_handler(event, context):
@@ -45,7 +41,7 @@ def lambda_handler(event, context):
             s3key_suffixes = event["s3key_suffixes"]
             s3keys = [os.path.join(s3key_prefix, i) for i in s3key_suffixes]
 
-        migrate_data(
+        for dest_key, data in convert_data(
             s3keys,
             dest_prefix,
             dest_store,
@@ -53,4 +49,5 @@ def lambda_handler(event, context):
             file_format,
             compression,
             level=level,
-        )
+        ):
+            s3_multi_p_upload(SOURCE_BUCKET, dest_key, io.BytesIO(data))

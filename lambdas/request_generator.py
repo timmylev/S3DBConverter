@@ -1,8 +1,7 @@
 import json
 import os
-from typing import Optional
+from typing import Any, Optional
 
-import boto3
 from pydantic import BaseModel, validator
 
 from lambdas.common import (
@@ -12,6 +11,7 @@ from lambdas.common import (
     FILE_FORMATS,
     PARTITION_SIZES,
     SOURCE_PREFIX,
+    SQS_CLIENT,
     batch_items,
     copy_metadata_file,
     group_s3keys_by_partition,
@@ -21,7 +21,6 @@ from lambdas.common import (
 )
 
 
-SQS_CLIENT = boto3.client("sqs")
 SQS_BATCH_SIZE = 10
 
 
@@ -54,29 +53,6 @@ def lambda_handler(event, context):
                         for i, k in enumerate(batch)
                     ],
                 )
-
-
-def generate_requests(collection, dataset, event):
-    s3_keys = list_keys(collection, dataset)
-    print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
-    prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
-
-    for gk, keys in group_s3keys_by_partition(s3_keys, event.partition_size):
-        # remove the prefix to reduce payload size
-        keys = [k.removeprefix(prefix) for k in keys]
-        request = {
-            "s3key_prefix": prefix,
-            "s3key_suffixes": keys,
-            "compression": event.compression,
-            "dest_prefix": event.dest_prefix,
-            "partition_size": event.partition_size,
-            "dest_store": event.dest_store,
-            "file_format": event.file_format,
-        }
-        if event.compression_level is not None:
-            request["compression_level"] = event.compression_level
-
-        yield request
 
 
 # main purpose of this is to validate user inputs
@@ -138,3 +114,26 @@ class RequestGeneratorEvent(BaseModel):
         if v not in FILE_FORMATS:
             raise ValueError(f"Invalid file_format {v}")
         return v
+
+
+def generate_requests(collection: str, dataset: str, event: RequestGeneratorEvent):
+    s3_keys = list(list_keys(collection, dataset))
+    print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
+    prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
+
+    for gk, keys in group_s3keys_by_partition(s3_keys, event.partition_size):
+        # remove the prefix to reduce payload size
+        keys = [k.removeprefix(prefix) for k in keys]
+        request: dict[str, Any] = {
+            "s3key_prefix": prefix,
+            "s3key_suffixes": keys,
+            "compression": event.compression,
+            "dest_prefix": event.dest_prefix,
+            "partition_size": event.partition_size,
+            "dest_store": event.dest_store,
+            "file_format": event.file_format,
+        }
+        if event.compression_level is not None:
+            request["compression_level"] = event.compression_level
+
+        yield request
