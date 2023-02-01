@@ -24,15 +24,17 @@ def setup_resources():
     s3_client = boto3.client("s3")
     s3_client.create_bucket(Bucket=SOURCE_BUCKET)
     insert_test_data("pjm", "realtime_price")
+    insert_test_data("pjm", "dayahead_price", days=70)
 
 
-def insert_test_data(coll, ds):
+def insert_test_data(coll, ds, days=520):
     s3_client = boto3.client("s3")
     header = "target_start,target_end,node_id,lmp"
     start = datetime(2020, 1, 1, tzinfo=timezone.utc)
     one_hour = int(timedelta(hours=1).total_seconds())
 
-    while start <= datetime(2021, 6, 15, tzinfo=timezone.utc):
+    lim = start + timedelta(days=days)
+    while start <= lim:
         year_partition = f"year={start.year}"
         filename = f"{int(start.timestamp())}.csv.gz"
         s3_key = os.path.join(SOURCE_PREFIX, coll, ds, year_partition, filename)

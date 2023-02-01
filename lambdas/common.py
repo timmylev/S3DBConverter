@@ -133,13 +133,14 @@ def load_as_partitions(
 
         # for hourly partitions, we'll have to further split the file/table
         if partition_size == "hour":
+            schema = table.schema
             # convert to pandas to use DF.groupby
             table = table.to_pandas()
             key_fn = lambda ts: ts - (ts % 3600)  # round down hour
             table["pk"] = list(map(key_fn, table.target_start))
             grouped = table.groupby("pk")
             for file_key, df in grouped:
-                t = pa.Table.from_pandas(df.drop(columns="pk"), preserve_index=False)
+                t = pa.Table.from_pandas(df, schema)
                 yield file_key, coll, ds, t
         else:
             yield file_start, coll, ds, table
