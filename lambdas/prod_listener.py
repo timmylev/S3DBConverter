@@ -12,11 +12,12 @@ SINGLE_JOB_SQS_URL = os.environ["SINGLE_JOB_SQS_URL"]
 # supported for live conversions
 DEST_STORES = [
     {
+        "dest_store": "dataclient",
         "dest_prefix": "version5/arrow/zst_lv22/day/",
+        "partition_size": "day",
         "file_format": "arrow",
         "compression": "zst",
         "compression_level": 22,
-        "dest_store": "dataclient",
     },
 ]
 
@@ -37,9 +38,9 @@ def lambda_handler(event, context):
         coll, ds, _ = s3_key.removeprefix(SOURCE_PREFIX).split("/", 2)
 
         for dest in DEST_STORES:
-            partition_type = dest["partition_type"]
+            dest_store = dest["dest_store"]
             # if it's a metadata file, just copy it directly
-            if s3_key.endswith("METADATA.json") and partition_type == "dataclient":
+            if s3_key.endswith("METADATA.json") and dest_store == "dataclient":
                 copy_metadata_file(coll, ds, dest["dest_prefix"])
 
             # trigger a conversion job
