@@ -11,13 +11,15 @@ from lambdas.common import (
     COMPRESSION,
     COMPRESSION_LEVELS,
     COMPRESSION_LEVELS_DEFAULTS,
+    DEST_STORES,
+    FILE_FORMATS,
+    PARTITION_SIZES,
     list_collections,
     list_datasets,
 )
 
 
 PROD_ACCOUNT = 516256908252
-PARTITIONS = ["day", "month", "year"]
 
 
 class Options(str, Enum):
@@ -65,12 +67,21 @@ class API:
         return self._stack_outputs
 
     def trigger_lambda(
-        self, dest_prefix, compression, partition, datasets, compression_level=None
+        self,
+        dest_store,
+        dest_prefix,
+        file_format,
+        compression,
+        partition_size,
+        datasets,
+        compression_level=None,
     ):
         event = {
+            "dest_store": dest_store,
             "dest_prefix": dest_prefix,
+            "file_format": file_format,
             "compression": compression,
-            "partition": partition,
+            "partition_size": partition_size,
             "datasets": datasets,
         }
         if compression_level:
@@ -84,9 +95,16 @@ class API:
 
 
 def prompt_backfills(api):
-    compression = prompt_options("Select dest compression:", COMPRESSION)
+    dest_store = prompt_options("Select destination type:", DEST_STORES)
 
-    if compression in COMPRESSION_LEVELS:
+    if dest_store == "dataclient":
+        file_fmt = prompt_options("Select file format:", FILE_FORMATS)
+    else:
+        file_fmt = "parquet"
+
+    compression = prompt_options("Select compression:", COMPRESSION)
+
+    if dest_store == "dataclient" and compression in COMPRESSION_LEVELS:
         levels = COMPRESSION_LEVELS[compression]
         validate = lambda x: int(x) in levels
         msg = f"Select compression level ({min(levels)} to {max(levels)}):"
@@ -97,7 +115,7 @@ def prompt_backfills(api):
         compression_level = None
         codec_str = compression
 
-    partition = prompt_options("Select dest partition:", PARTITIONS)
+    partition = prompt_options("Select dest partition size :", PARTITION_SIZES)
 
     if partition == "year":
         print(
@@ -106,8 +124,8 @@ def prompt_backfills(api):
         )
 
     dest_prefix = prompt_text(
-        "Specify dest s3 prefix",
-        default="/".join(["version5", "arrow", codec_str, partition, ""]),
+        "Specify destination s3 prefix",
+        default="/".join(["version5", dest_store, file_fmt, codec_str, partition, ""]),
     )
     dest_prefix = os.path.join(dest_prefix, "")
 
@@ -147,7 +165,9 @@ def prompt_backfills(api):
             for coll, ds in targets.items():
                 if ds:
                     api.trigger_lambda(
+                        dest_store,
                         dest_prefix,
+                        file_fmt,
                         compression,
                         partition,
                         {coll: ds},
