@@ -38,7 +38,7 @@ def main():
     api = API(prompt_text("Stack Name:", default=STACK_NAME))
 
     while True:
-        action = prompt_options("What would you like to do", [i.value for i in Options])
+        action = prompt_options("What would you like to do:", [i.value for i in Options])
 
         if action == Options.BACKFILLS:
             prompt_backfills(api)
@@ -124,7 +124,7 @@ def prompt_backfills(api):
         compression_level = None
         codec_str = compression
 
-    partition = prompt_options("Select dest partition size :", PARTITION_SIZES)
+    partition = prompt_options("Select dest partition size:", PARTITION_SIZES)
 
     if partition == "year":
         print(
@@ -133,7 +133,7 @@ def prompt_backfills(api):
         )
 
     dest_prefix = prompt_text(
-        "Specify destination s3 prefix",
+        "Specify destination s3 prefix:",
         default="/".join(["version5", dest_store, file_fmt, codec_str, partition, ""]),
     )
     dest_prefix = os.path.join(dest_prefix, "")
@@ -173,7 +173,8 @@ def prompt_backfills(api):
         else:
             n_files = None
 
-        msg = f"Selected {sum([len(v) for v in targets.values()])} datasets. Proceed?"
+        num_datasets = sum([len(v) for v in targets.values()])
+        msg = f"Backfilling {num_datasets} datasets. Proceed?"
         if prompt_confirmation(msg):
             print("Trigerring Request Generator...", end="", flush=True)
 
