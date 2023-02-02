@@ -22,6 +22,11 @@ from lambdas.common import (
 PROD_ACCOUNT = 516256908252
 
 
+class BackfillRange(str, Enum):
+    ALL = "All files"
+    LATEST_N = "Latest N files"
+
+
 class Options(str, Enum):
     BACKFILLS = "Trigger S3DB Conversions"
     EXIT = "Exit"
@@ -75,6 +80,7 @@ class API:
         partition_size,
         datasets,
         compression_level=None,
+        n_files=None,
     ):
         event = {
             "dest_store": dest_store,
@@ -86,6 +92,9 @@ class API:
         }
         if compression_level:
             event["compression_level"] = compression_level
+
+        if n_files:
+            event["n_files"] = n_files
 
         self.lmb.invoke(
             FunctionName=self.stack_outputs["RequestGeneratorFunctionName"],
@@ -158,6 +167,12 @@ def prompt_backfills(api):
         print("No datasets selected...")
 
     else:
+        n_files = prompt_options("Select file range:", [e.value for e in BackfillRange])
+        if n_files == BackfillRange.LATEST_N:
+            n_files = prompt_text("Specify number of files:")
+        else:
+            n_files = None
+
         msg = f"Selected {sum([len(v) for v in targets.values()])} datasets. Proceed?"
         if prompt_confirmation(msg):
             print("Trigerring Request Generator...", end="", flush=True)
@@ -172,6 +187,7 @@ def prompt_backfills(api):
                         partition,
                         {coll: ds},
                         compression_level=compression_level,
+                        n_files=n_files,
                     )
 
             print(" Done")

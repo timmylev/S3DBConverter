@@ -64,6 +64,7 @@ class RequestGeneratorEvent(BaseModel):
     partition_size: str = "day"
     dest_store: str = "dataclient"
     file_format: str = "arrow"
+    n_files: Optional[int] = None
 
     @validator("datasets")
     def datasets_exist(cls, v):
@@ -115,10 +116,21 @@ class RequestGeneratorEvent(BaseModel):
             raise ValueError(f"Invalid file_format {v}")
         return v
 
+    @validator("n_files")
+    def valid_n_filest(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError(f"Invalid n_files '{v}', must be positive.")
+        return v
+
 
 def generate_requests(collection: str, dataset: str, event: RequestGeneratorEvent):
-    s3_keys = list(list_keys(collection, dataset))
+    s3_keys = sorted(list_keys(collection, dataset))
     print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
+
+    if event.n_files:
+        s3_keys = s3_keys[-event.n_files :]
+        print(f"Selected latest {event.n_files} keys")
+
     prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
 
     for gk, keys in group_s3keys_by_partition(s3_keys, event.partition_size):
