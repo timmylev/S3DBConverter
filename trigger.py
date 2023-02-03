@@ -13,13 +13,40 @@ from lambdas.common import (
     COMPRESSION_LEVELS_DEFAULTS,
     DEST_STORES,
     FILE_FORMATS,
-    PARTITION_SIZES,
+    PARTITIONS,
+    gen_partition_key,
+    get_dataset_type_map,
     list_collections,
     list_datasets,
 )
 
 
 PROD_ACCOUNT = 516256908252
+# ATHENA_WORKGROUP = "s3db_admin"
+# DBS = ["caiso", "ercot", "iso_ne", "miso", "nyiso", "pjm", "spp", "weather"]
+
+# Glue Catalog/Table and Athena Configs
+DATA_INPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+DATA_OUTPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+SER_DER_LIB = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+DATA_LOCATION = "s3://invenia-datafeeds-output/version5/athena/parquet/sz/day/"
+PARQUET_COMPRESSION = "SNAPPY"
+PARTITION_SIZE = "day"
+PARTITION_KEY = gen_partition_key(PARTITION_SIZE)
+PARTITION_TYPE = PARTITIONS[PARTITION_SIZE]["type"]
+# This type is different from the PartitionKeyType above, it is only
+# used during partition projection, we want it to be always a 'date'
+PARTITION_PROJECTION_TYPE = "date"
+PARTITION_PROJECTION_FORMAT = PARTITIONS[PARTITION_SIZE]["projection_format"]
+PARTITION_PROJECTION_UNIT = PARTITIONS[PARTITION_SIZE]["unit"]
+PARTITION_PROJECTION_INTERVAL = "1"
+PARTITION_PROJECTION_END = "NOW+1WEEKS"
+
+
+class GlueOptions(str, Enum):
+    CREATE = "Create tables for new datasets"
+    DELETE = "Delete existing tables"
+    REPAIR = "Validate and Repair table schemas"
 
 
 class BackfillRange(str, Enum):
@@ -29,6 +56,7 @@ class BackfillRange(str, Enum):
 
 class Options(str, Enum):
     BACKFILLS = "Trigger S3DB Conversions"
+    MANAGE_ATHENA = "Manage AthenaDB"
     EXIT = "Exit"
 
 
@@ -44,6 +72,9 @@ def main():
 
         if action == Options.BACKFILLS:
             prompt_backfills(api)
+
+        elif action == Options.MANAGE_ATHENA:
+            prompt_athena_manager(api)
 
         elif action == Options.EXIT:
             print("Terminating...")
@@ -63,6 +94,8 @@ class API:
 
         self.cfn = self.aws_sesh.client("cloudformation")
         self.lmb = self.aws_sesh.client("lambda")
+        self.athena = self.aws_sesh.client("athena")
+        self.glue = self.aws_sesh.client("glue")
 
     @property
     def stack_outputs(self):
@@ -104,6 +137,82 @@ class API:
             Payload=json.dumps(event),
         )
 
+    def check_glue_catalog(self):
+        s3db_colls = set(list_collections())
+        glue_dbs = set([el["Name"] for el in self.glue.get_databases()["DatabaseList"]])
+
+        missing_dbs = s3db_colls - glue_dbs
+        if missing_dbs:
+            print(f"  Detected {len(missing_dbs)} missing database(s)")
+            for db in missing_dbs:
+                print(f"    Creating database '{db}'...")
+                self.glue.create_database(DatabaseInput={"Name": db})
+
+        available_tables = {db: list_datasets(db) for db in s3db_colls}
+        created_tables = {db: list(self.list_glue_tables(db)) for db in s3db_colls}
+        missing_tables = {
+            db: set(available_tables[db]) - set([t["Name"] for t in created_tables[db]])
+            for db in s3db_colls
+        }
+        return created_tables, missing_tables
+
+    def list_glue_tables(self, db):
+        paginator = self.glue.get_paginator("get_tables")
+        for page in paginator.paginate(DatabaseName=db):
+            yield from page["TableList"]
+
+    def create_glue_table(self, db, table, update=False):
+        operation = self.glue.update_table if update else self.glue.create_table
+        # TODO: find the start date per dataset dynamically
+        pp_range = f"2010-01-01,{PARTITION_PROJECTION_END}"
+        operation(
+            DatabaseName=db,
+            TableInput={
+                "Name": table,
+                "StorageDescriptor": {
+                    "Columns": self.get_glue_type_map_from_s3db(db, table),
+                    "Location": f"{DATA_LOCATION}{db}/{table}",
+                    "InputFormat": DATA_INPUT_FORMAT,
+                    "OutputFormat": DATA_OUTPUT_FORMAT,
+                    # None because we already use parquet columnar compression, which
+                    # is specified in the table properties, not here.
+                    "Compressed": False,
+                    "SerdeInfo": {"SerializationLibrary": SER_DER_LIB},
+                },
+                "PartitionKeys": [{"Name": PARTITION_KEY, "Type": PARTITION_TYPE}],
+                "TableType": "EXTERNAL_TABLE",
+                "Parameters": {
+                    f"projection.{PARTITION_KEY}.type": PARTITION_PROJECTION_TYPE,
+                    f"projection.{PARTITION_KEY}.interval.unit": PARTITION_PROJECTION_UNIT,  # noqa 501
+                    f"projection.{PARTITION_KEY}.interval": PARTITION_PROJECTION_INTERVAL,  # noqa 501
+                    f"projection.{PARTITION_KEY}.range": pp_range,
+                    f"projection.{PARTITION_KEY}.format": PARTITION_PROJECTION_FORMAT,
+                    "projection.enabled": "TRUE",
+                    "parquet.compression": PARQUET_COMPRESSION,
+                },
+            },
+        )
+
+    def delete_glue_table(self, db, table):
+        self.glue.delete_table(DatabaseName=db, Name=table)
+
+    def get_glue_type_map_from_s3db(self, db, table):
+        s3db_types = get_dataset_type_map(db, table)
+        overrides = {"target_bounds": "tinyint"}
+        conversions = {
+            "str": "string",
+            "float": "double",
+            "bool": "tinyint",  # datafeeds stored these as ints
+            "timedelta": "float",  # datafeeds stored these as floats
+            "datetime": "int",
+            # TODO: check converted parquet type
+            "list": "string",  # datasoup.ercot_da_energy_bids
+        }
+        return [
+            {"Name": k, "Type": overrides.get(k, conversions.get(v, v))}
+            for k, v in s3db_types.items()
+        ]
+
 
 def prompt_backfills(api):
     dest_store = prompt_options("Select destination type:", DEST_STORES)
@@ -126,7 +235,7 @@ def prompt_backfills(api):
         compression_level = None
         codec_str = compression
 
-    partition = prompt_options("Select dest partition size:", PARTITION_SIZES)
+    partition = prompt_options("Select dest partition size:", list(PARTITIONS.keys()))
 
     if partition == "year":
         print(
@@ -196,6 +305,74 @@ def prompt_backfills(api):
             print(" Done")
         else:
             print("Cancelling...")
+
+
+def prompt_athena_manager(api):
+    options = [GlueOptions.REPAIR, GlueOptions.DELETE]
+
+    print("Checking Athena status...")
+    created_tables, missing_tables = api.check_glue_catalog()
+    has_missing = any([tbs for tbs in missing_tables.values()])
+
+    if has_missing:
+        options.append(GlueOptions.CREATE)
+        print("  New datasets detected:")
+        for db, tables in missing_tables.items():
+            if tables:
+                print(f"    - {db} ({len(tables)} datasets): {sorted(tables)}")
+
+    print("Existing Databases and Tables:")
+    for db, tables in created_tables.items():
+        if tables:
+            print(f"  {db}: {len(tables)} tables")
+
+    opts = [opt.value for opt in options]
+    selected = prompt_options("What would you like to do?", opts)
+
+    if selected == GlueOptions.CREATE:
+        tables = sorted([f"{db}.{t}" for db, ts in missing_tables.items() for t in ts])
+        to_create = prompt_checkbox("Select tables:", tables)
+        for el in to_create:
+            db, tbl = el.split(".")
+            print(f"Creating Glue Table '{el}'...")
+            api.create_glue_table(db, tbl)
+
+    elif selected == GlueOptions.DELETE:
+        tables = sorted(
+            [f"{db}.{t['Name']}" for db, tbls in created_tables.items() for t in tbls]
+        )
+        to_delete = prompt_checkbox("Select tables:", tables)
+        for el in to_delete:
+            db, tbl = to_delete.split(".")
+            print(f"Deleting Glue Table '{el}'...")
+            api.delete_glue_table(db, tbl)
+
+    elif selected == GlueOptions.REPAIR:
+        for db, tables in created_tables.items():
+            for table in tables:
+                name = table["Name"]
+                print(f"Checking '{db}.{name}'... ", end="", flush=True)
+                s3db_type = {
+                    el["Name"]: el["Type"]
+                    for el in api.get_glue_type_map_from_s3db(db, name)
+                }
+                table_type = {
+                    el["Name"]: el["Type"]
+                    for el in table["StorageDescriptor"]["Columns"]
+                }
+                if s3db_type != table_type:
+                    print("mismatch found:")
+                    print(f"   s3db: {s3db_type}")
+                    print(f"  table: {table_type}")
+                    if prompt_confirmation("Recreate Glue Table?"):
+                        print(f"Updating '{db}.{name}'... ", end="", flush=True)
+                        api.create_glue_table(db, name, update=True)
+                        print("done")
+                else:
+                    print("done")
+
+    else:
+        raise Exception(f"Unhandled selection: {selected}")
 
 
 def prompt_text(text, default=None, validate=None) -> str:

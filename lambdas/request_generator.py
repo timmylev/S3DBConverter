@@ -9,7 +9,7 @@ from lambdas.common import (
     COMPRESSION_LEVELS,
     DEST_STORES,
     FILE_FORMATS,
-    PARTITION_SIZES,
+    PARTITIONS,
     SOURCE_PREFIX,
     SQS_CLIENT,
     batch_items,
@@ -100,7 +100,7 @@ class RequestGeneratorEvent(BaseModel):
 
     @validator("partition_size")
     def valid_partition_size(cls, v):
-        if v not in PARTITION_SIZES:
+        if v not in PARTITIONS.keys():
             raise ValueError(f"Invalid partition size {v}")
         return v
 

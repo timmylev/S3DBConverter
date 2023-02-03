@@ -40,7 +40,36 @@ _PYARROW_ARG_TRANSLATION = {
 
 DEST_STORES = ["athena", "dataclient"]
 FILE_FORMATS = ["arrow", "parquet"]
-PARTITION_SIZES = ["hour", "day", "month", "year"]
+# Partition key and partition projections configs used in Athena
+PARTITIONS = {
+    "hour": {
+        # We use python format, cuz we're running python
+        "format": "%Y-%m-%d %H:%M:%S",
+        # Athena uses java date format
+        "projection_format": "yyyy-MM-dd HH:mm:ss",
+        "type": "timestamp",
+        "unit": "HOURS",
+    },
+    "day": {
+        "format": "%Y-%m-%d",
+        "projection_format": "yyyy-MM-dd",
+        "type": "date",
+        "unit": "DAYS",
+    },
+    "month": {
+        "format": "%Y-%m-%d",
+        "projection_format": "yyyy-MM-dd",
+        "type": "date",
+        "unit": "MONTHS",
+    },
+    "year": {
+        "format": "%Y-%m-%d",
+        "projection_format": "yyyy-MM-dd",
+        "type": "date",
+        "unit": "YEARS",
+    },
+}
+gen_partition_key = lambda partition_size: f"{partition_size}_partition"  # type: ignore
 
 SQS_CLIENT = boto3.client("sqs")
 S3_CLIENT = boto3.client("s3")
@@ -79,6 +108,12 @@ def get_dataset_pkeys(collection: str, dataset: str) -> list[str]:
     key = gen_metadata_key(collection, dataset)
     meta = json.load(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
     return meta["superkey"]
+
+
+def get_dataset_type_map(collection: str, dataset: str) -> dict[str, str]:
+    key = gen_metadata_key(collection, dataset)
+    meta = json.load(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
+    return meta["type_map"]
 
 
 def extract_datetime(s3_key: str) -> datetime:
@@ -246,9 +281,10 @@ def _gen_athena_key(
     # Although Athena partition projection allows any format, use a format that is
     # with the date or timestamp data type in Presto such that querying partitions using
     # these types actually works.
-    dt_fmt = "%Y-%m-%d %H:%M:%S" if partition_size == "hour" else "%Y-%m-%d"
+    dt_fmt = PARTITIONS[partition_size]["format"]
     partition_val = datetime.fromtimestamp(file_start, timezone.utc).strftime(dt_fmt)
-    filename = f"{partition_size}_partition={partition_val}/{file_start}.parquet"
+    partition_key = gen_partition_key(partition_size)
+    filename = f"{partition_key}={partition_val}/{file_start}.parquet"
     return os.path.join(dest_prefix, coll, ds, filename)
 
 
