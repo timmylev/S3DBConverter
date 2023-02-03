@@ -315,7 +315,7 @@ def prompt_athena_manager(api):
     has_missing = any([tbs for tbs in missing_tables.values()])
 
     if has_missing:
-        options.append(GlueOptions.CREATE)
+        options = [GlueOptions.CREATE, *options]
         print("  New datasets detected:")
         for db, tables in missing_tables.items():
             if tables:
@@ -343,8 +343,8 @@ def prompt_athena_manager(api):
         )
         to_delete = prompt_checkbox("Select tables:", tables)
         for el in to_delete:
-            db, tbl = to_delete.split(".")
-            print(f"Deleting Glue Table '{el}'...")
+            db, tbl = el.split(".")
+            print(f"Deleting Glue Table '{tbl}'...")
             api.delete_glue_table(db, tbl)
 
     elif selected == GlueOptions.REPAIR:
@@ -364,7 +364,7 @@ def prompt_athena_manager(api):
                     print("mismatch found:")
                     print(f"   s3db: {s3db_type}")
                     print(f"  table: {table_type}")
-                    if prompt_confirmation("Recreate Glue Table?"):
+                    if prompt_confirmation("Repair Glue Table?"):
                         print(f"Updating '{db}.{name}'... ", end="", flush=True)
                         api.create_glue_table(db, name, update=True)
                         print("done")
