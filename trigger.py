@@ -38,7 +38,9 @@ def main():
     api = API(prompt_text("Stack Name:", default=STACK_NAME))
 
     while True:
-        action = prompt_options("What would you like to do:", [i.value for i in Options])
+        action = prompt_options(
+            "What would you like to do:", [i.value for i in Options]
+        )
 
         if action == Options.BACKFILLS:
             prompt_backfills(api)

@@ -113,7 +113,7 @@ def convert_data(
                     f"Only parquet is supported for Athena, found {file_format}"
                 )
             data = _compress_to_bytes(table, compression, to_parquet=True)
-            key = _gen_athena_key(ts, coll, ds, dest_prefix)
+            key = _gen_athena_key(ts, coll, ds, dest_prefix, partition_size)
         else:
             to_parquet = file_format == "parquet"
             data = _compress_to_bytes(
@@ -240,11 +240,15 @@ def _gen_s3db_key(
     return os.path.join(dest_prefix, coll, ds, filename)
 
 
-def _gen_athena_key(file_start: int, coll: str, ds: str, dest_prefix: str) -> str:
-    # https://docs.aws.amazon.com/athena/latest/ug/partition-projection-supported-types.html
-    dt_fmt = "%d-%m-%Y-%H-%M-%S"
+def _gen_athena_key(
+    file_start: int, coll: str, ds: str, dest_prefix: str, partition_size: str
+) -> str:
+    # Although Athena partition projection allows any format, use a format that is
+    # with the date or timestamp data type in Presto such that querying partitions using
+    # these types actually works.
+    dt_fmt = "%Y-%m-%d %H:%M:%S" if partition_size == "hour" else "%Y-%m-%d"
     partition_val = datetime.fromtimestamp(file_start, timezone.utc).strftime(dt_fmt)
-    filename = f"dt={partition_val}/{file_start}.parquet"
+    filename = f"{partition_size}_partition={partition_val}/{file_start}.parquet"
     return os.path.join(dest_prefix, coll, ds, filename)
 
 
