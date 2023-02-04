@@ -6,11 +6,10 @@ from lambdas.common import SOURCE_PREFIX, SQS_CLIENT, copy_metadata_file
 
 
 SQS_BATCH_SIZE = 10
-SINGLE_JOB_SQS_URL = os.environ["SINGLE_JOB_SQS_URL"]
 
 # define file conversion jobs here, currently only day-partitions are
 # supported for live conversions
-DEST_STORES = [
+LIVE_STORES = [
     {
         "dest_store": "dataclient",
         "dest_prefix": "version5/arrow/zst_lv22/day/",
@@ -18,6 +17,13 @@ DEST_STORES = [
         "file_format": "arrow",
         "compression": "zst",
         "compression_level": 22,
+    },
+    {
+        "dest_store": "athena",
+        "dest_prefix": "version5/athena/parquet/sz/day/",
+        "partition_size": "day",
+        "file_format": "parquet",
+        "compression": "sz",
     },
 ]
 
@@ -37,7 +43,7 @@ def lambda_handler(event, context):
 
         coll, ds, _ = s3_key.removeprefix(SOURCE_PREFIX).split("/", 2)
 
-        for dest in DEST_STORES:
+        for dest in LIVE_STORES:
             dest_store = dest["dest_store"]
             # if it's a metadata file, just copy it directly
             if s3_key.endswith("METADATA.json") and dest_store == "dataclient":
@@ -46,6 +52,6 @@ def lambda_handler(event, context):
             # trigger a conversion job
             else:
                 SQS_CLIENT.send_message(
-                    QueueUrl=SINGLE_JOB_SQS_URL,
+                    QueueUrl=os.environ["SINGLE_JOB_SQS_URL"],
                     MessageBody=json.dumps({"s3_key": s3_key, **dest}),
                 )

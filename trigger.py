@@ -4,7 +4,9 @@ import sys
 from enum import Enum
 
 import boto3
+from pyfiglet import Figlet
 from PyInquirer import Separator, prompt
+from termcolor import cprint
 
 from deploy import STACK_NAME
 from lambdas.common import (
@@ -14,11 +16,14 @@ from lambdas.common import (
     DEST_STORES,
     FILE_FORMATS,
     PARTITIONS,
+    SOURCE_BUCKET,
+    SOURCE_PREFIX,
     gen_partition_key,
     get_dataset_type_map,
     list_collections,
     list_datasets,
 )
+from lambdas.prod_listener import LIVE_STORES
 
 
 PROD_ACCOUNT = 516256908252
@@ -61,7 +66,7 @@ class Options(str, Enum):
 
 
 def main():
-    print("-------------- S3DB Converter CLI --------------")
+    print_welcome()
 
     api = API(prompt_text("Stack Name:", default=STACK_NAME))
 
@@ -198,13 +203,18 @@ class API:
 
     def get_glue_type_map_from_s3db(self, db, table):
         s3db_types = get_dataset_type_map(db, table)
-        overrides = {"target_bounds": "tinyint"}
+        overrides = {
+            "target_start": "bigint",
+            "target_end": "bigint",
+            "release_date": "bigint",
+            "target_bounds": "tinyint",
+        }
         conversions = {
             "str": "string",
             "float": "double",
             "bool": "tinyint",  # datafeeds stored these as ints
-            "timedelta": "float",  # datafeeds stored these as floats
-            "datetime": "int",
+            "timedelta": "double",  # datafeeds stored these as floats
+            "datetime": "bigint",
             # TODO: check converted parquet type
             "list": "string",  # datasoup.ercot_da_energy_bids
         }
@@ -212,6 +222,19 @@ class API:
             {"Name": k, "Type": overrides.get(k, conversions.get(v, v))}
             for k, v in s3db_types.items()
         ]
+
+
+def print_welcome():
+    cprint(Figlet(font="big").renderText("S3DB   CLI"), "blue")
+    print("S3DB Source Location:")
+    cprint(f"  s3://{SOURCE_BUCKET}/{SOURCE_PREFIX}", "green")
+    print("Live Conversions:")
+    for el in LIVE_STORES:
+        uri = f"s3://{SOURCE_BUCKET}/{el['dest_prefix']}"
+        cprint(f"  ({el['dest_store']}) {uri}", "green")
+    print("AthenaDB Source:")
+    cprint(f"  {DATA_LOCATION}", "green")
+    print("\nWelcome to S3DB CLI! Just follow the prompts.\n")
 
 
 def prompt_backfills(api):
@@ -334,7 +357,7 @@ def prompt_athena_manager(api):
         to_create = prompt_checkbox("Select tables:", tables)
         for el in to_create:
             db, tbl = el.split(".")
-            print(f"Creating Glue Table '{el}'...")
+            print(f"Creating Glue Table '{db}.{el}'...")
             api.create_glue_table(db, tbl)
 
     elif selected == GlueOptions.DELETE:
@@ -344,7 +367,7 @@ def prompt_athena_manager(api):
         to_delete = prompt_checkbox("Select tables:", tables)
         for el in to_delete:
             db, tbl = el.split(".")
-            print(f"Deleting Glue Table '{tbl}'...")
+            print(f"Deleting Glue Table '{db}.{tbl}'...")
             api.delete_glue_table(db, tbl)
 
     elif selected == GlueOptions.REPAIR:
