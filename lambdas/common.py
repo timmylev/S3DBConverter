@@ -201,9 +201,6 @@ def _get_arrow_table(source_keys: list[str], type_overrides=None) -> pa.Table:
 
     def download(i, k):
         data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
-        # TODO: CSV has very limited types, eg:
-        # - `bool` are stored as ints
-        # - `bound` are stored
         table = csv.read_csv(gzip.open(data), convert_options=opts)
         show_memory(f"loaded table {i}")
         return table

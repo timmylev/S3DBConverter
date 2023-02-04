@@ -221,11 +221,10 @@ class API:
         conversions = {
             "str": "string",
             "float": "double",
-            "bool": "tinyint",  # datafeeds stored these as ints
-            "timedelta": "double",  # datafeeds stored these as floats
+            "bool": "tinyint",
+            "timedelta": "double",
             "datetime": "bigint",
-            # TODO: check converted parquet type
-            "list": "string",  # datasoup.ercot_da_energy_bids
+            "list": "string",
         }
         return [
             {"Name": k, "Type": overrides.get(k, conversions.get(v, v))}
