@@ -3,6 +3,8 @@ import json
 import os
 from urllib.parse import unquote
 
+from loguru import logger
+
 from lambdas.common import SOURCE_BUCKET, convert_data, s3_multi_p_upload
 
 
@@ -19,7 +21,7 @@ def lambda_handler(event, context):
     Note that this code is shared by both the single-request and batch-reqeust lambda
     functions, using 2 separate lambda functions for different memory requirements.
     """
-    print(event)
+    logger.info(event)
 
     for message in event["Records"]:
         event = json.loads(unquote(message["body"]))
@@ -50,4 +52,5 @@ def lambda_handler(event, context):
             compression,
             level=level,
         ):
+            logger.info(f"Uploading file '{dest_key}'...")
             s3_multi_p_upload(SOURCE_BUCKET, dest_key, io.BytesIO(data))

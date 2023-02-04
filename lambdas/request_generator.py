@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Optional
 
+from loguru import logger
 from pydantic import BaseModel, validator
 
 from lambdas.common import (
@@ -29,7 +30,7 @@ def lambda_handler(event, context):
     Receives backfill requests and generates file conversion jobs, before sending them
     off to the request handler function via SQS queues.
     """
-    print(f"Event: {event}")
+    logger.info(event)
     event = RequestGeneratorEvent(**event)
 
     for coll, dss in event.datasets.items():
@@ -40,10 +41,11 @@ def lambda_handler(event, context):
                 sqs_url = os.environ["BATCH_JOB_SQS_URL"]
 
             if event.dest_store == "dataclient":
+                logger.info(f"Copying over metadata file for '{coll}.{ds}'")
                 copy_metadata_file(coll, ds, event.dest_prefix)
 
             items = list(generate_requests(coll, ds, event))
-            print(f"Submitting {len(items)} requests for '{coll}-{ds}'...")
+            logger.info(f"Submitting {len(items)} requests for '{coll}-{ds}'...")
 
             for batch in batch_items(items, SQS_BATCH_SIZE):
                 SQS_CLIENT.send_message_batch(
@@ -125,11 +127,11 @@ class RequestGeneratorEvent(BaseModel):
 
 def generate_requests(collection: str, dataset: str, event: RequestGeneratorEvent):
     s3_keys = sorted(list_keys(collection, dataset))
-    print(f"Found {len(s3_keys)} s3 keys for '{collection}-{dataset}'")
+    logger.info(f"Found {len(s3_keys)} s3 keys for '{collection}.{dataset}'")
 
     if event.n_files:
         s3_keys = s3_keys[-event.n_files :]
-        print(f"Selected latest {event.n_files} keys")
+        logger.info(f"Selected latest {event.n_files} keys")
 
     prefix = os.path.join(SOURCE_PREFIX, collection, dataset, "")
 

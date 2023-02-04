@@ -13,3 +13,4 @@ psutil
 pytest
 PyFiglet
 termcolor
+loguru

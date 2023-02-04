@@ -2,3 +2,4 @@ boto3
 PyInquirer
 PyFiglet
 termcolor
+loguru

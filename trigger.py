@@ -49,9 +49,10 @@ PARTITION_PROJECTION_END = "NOW+1WEEKS"
 
 
 class GlueOptions(str, Enum):
-    CREATE = "Create tables for new datasets"
-    DELETE = "Delete existing tables"
-    REPAIR = "Validate and Repair table schemas"
+    CREATE = "Check for New S3DB Datasets"
+    REPAIR = "Check/Repair Table Schemas"
+    DELETE = "Delete Tables"
+    BACK = "Back"
 
 
 class BackfillRange(str, Enum):
@@ -148,9 +149,9 @@ class API:
 
         missing_dbs = s3db_colls - glue_dbs
         if missing_dbs:
-            print(f"  Detected {len(missing_dbs)} missing database(s)")
+            print(f"Detected {len(missing_dbs)} missing database(s)")
             for db in missing_dbs:
-                print(f"    Creating database '{db}'...")
+                print(f"Creating database '{db}'...")
                 self.glue.create_database(DatabaseInput={"Name": db})
 
         available_tables = {db: list_datasets(db) for db in s3db_colls}
@@ -161,12 +162,18 @@ class API:
         }
         return created_tables, missing_tables
 
+    def list_glue_databases(self):
+        s3db_colls = set(list_collections())
+        glue_dbs = set([el["Name"] for el in self.glue.get_databases()["DatabaseList"]])
+        return sorted(s3db_colls & glue_dbs)
+
     def list_glue_tables(self, db):
         paginator = self.glue.get_paginator("get_tables")
         for page in paginator.paginate(DatabaseName=db):
             yield from page["TableList"]
 
     def create_glue_table(self, db, table, update=False):
+        print(f"Creating Glue Table '{db}.{table}'...")
         operation = self.glue.update_table if update else self.glue.create_table
         # TODO: find the start date per dataset dynamically
         pp_range = f"2010-01-01,{PARTITION_PROJECTION_END}"
@@ -199,6 +206,7 @@ class API:
         )
 
     def delete_glue_table(self, db, table):
+        print(f"Deleting Glue Table '{db}.{table}'...")
         self.glue.delete_table(DatabaseName=db, Name=table)
 
     def get_glue_type_map_from_s3db(self, db, table):
@@ -226,15 +234,17 @@ class API:
 
 def print_welcome():
     cprint(Figlet(font="big").renderText("S3DB   CLI"), "blue")
-    print("S3DB Source Location:")
-    cprint(f"  s3://{SOURCE_BUCKET}/{SOURCE_PREFIX}", "green")
-    print("Live Conversions:")
+    print("\nWelcome to S3DB CLI!\n")
+    print(" S3DB Source:")
+    cprint(f"   s3://{SOURCE_BUCKET}/{SOURCE_PREFIX}", "green")
+    print(f" Live Conversions ({len(LIVE_STORES)}):")
     for el in LIVE_STORES:
         uri = f"s3://{SOURCE_BUCKET}/{el['dest_prefix']}"
-        cprint(f"  ({el['dest_store']}) {uri}", "green")
-    print("AthenaDB Source:")
-    cprint(f"  {DATA_LOCATION}", "green")
-    print("\nWelcome to S3DB CLI! Just follow the prompts.\n")
+        cprint(f"   {uri}  ", "green", end="")
+        cprint(f"({el['dest_store']})", "blue")
+    print(" AthenaDB Source:")
+    cprint(f"   {DATA_LOCATION}", "green")
+    print("\nJust follow the prompts:\n")
 
 
 def prompt_backfills(api):
@@ -331,48 +341,44 @@ def prompt_backfills(api):
 
 
 def prompt_athena_manager(api):
-    options = [GlueOptions.REPAIR, GlueOptions.DELETE]
+    opt = prompt_options("What would you like to do:", [i.value for i in GlueOptions])
 
-    print("Checking Athena status...")
-    created_tables, missing_tables = api.check_glue_catalog()
-    has_missing = any([tbs for tbs in missing_tables.values()])
+    if opt == GlueOptions.CREATE:
+        print("Checking for new S3DB datasets... ", end="", flush=True)
+        created, missing = api.check_glue_catalog()
 
-    if has_missing:
-        options = [GlueOptions.CREATE, *options]
-        print("  New datasets detected:")
-        for db, tables in missing_tables.items():
-            if tables:
-                print(f"    - {db} ({len(tables)} datasets): {sorted(tables)}")
+        if any([tbs for tbs in missing.values()]):
+            print("new datasets detected:")
+            for db in sorted(missing.keys()):
+                tables = missing[db]
+                if tables:
+                    print(f"  {db:9}: {sorted(tables)}")
 
-    print("Existing Databases and Tables:")
-    for db, tables in created_tables.items():
-        if tables:
-            print(f"  {db}: {len(tables)} tables")
+            tables = sorted([f"{db}.{t}" for db, tbls in missing.items() for t in tbls])
+            to_create = prompt_checkbox("Select tables to create:", tables)
 
-    opts = [opt.value for opt in options]
-    selected = prompt_options("What would you like to do?", opts)
+            for el in to_create:
+                db, tbl = el.split(".")
+                api.create_glue_table(db, tbl)
 
-    if selected == GlueOptions.CREATE:
-        tables = sorted([f"{db}.{t}" for db, ts in missing_tables.items() for t in ts])
-        to_create = prompt_checkbox("Select tables:", tables)
-        for el in to_create:
-            db, tbl = el.split(".")
-            print(f"Creating Glue Table '{db}.{el}'...")
-            api.create_glue_table(db, tbl)
+        else:
+            print("no new datasets detected.")
 
-    elif selected == GlueOptions.DELETE:
-        tables = sorted(
-            [f"{db}.{t['Name']}" for db, tbls in created_tables.items() for t in tbls]
-        )
-        to_delete = prompt_checkbox("Select tables:", tables)
+    elif opt == GlueOptions.DELETE:
+        print("Loading tables... ")
+        tables = [
+            f"{db}.{t['Name']}"
+            for db in api.list_glue_databases()
+            for t in api.list_glue_tables(db)
+        ]
+        to_delete = prompt_checkbox("Select tables:", sorted(tables))
         for el in to_delete:
             db, tbl = el.split(".")
-            print(f"Deleting Glue Table '{db}.{tbl}'...")
             api.delete_glue_table(db, tbl)
 
-    elif selected == GlueOptions.REPAIR:
-        for db, tables in created_tables.items():
-            for table in tables:
+    elif opt == GlueOptions.REPAIR:
+        for db in api.list_glue_databases():
+            for table in api.list_glue_tables(db):
                 name = table["Name"]
                 print(f"Checking '{db}.{name}'... ", end="", flush=True)
                 s3db_type = {
@@ -384,7 +390,7 @@ def prompt_athena_manager(api):
                     for el in table["StorageDescriptor"]["Columns"]
                 }
                 if s3db_type != table_type:
-                    print("mismatch found:")
+                    print("FAILED - Schema mismatch found!")
                     print(f"   s3db: {s3db_type}")
                     print(f"  table: {table_type}")
                     if prompt_confirmation("Repair Glue Table?"):
@@ -392,10 +398,13 @@ def prompt_athena_manager(api):
                         api.create_glue_table(db, name, update=True)
                         print("done")
                 else:
-                    print("done")
+                    print("SUCCESS")
+
+    elif opt == GlueOptions.BACK:
+        pass
 
     else:
-        raise Exception(f"Unhandled selection: {selected}")
+        raise Exception(f"Unhandled selection: {opt}")
 
 
 def prompt_text(text, default=None, validate=None) -> str:

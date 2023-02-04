@@ -2,6 +2,8 @@ import json
 import os
 from urllib.parse import unquote
 
+from loguru import logger
+
 from lambdas.common import SOURCE_PREFIX, SQS_CLIENT, copy_metadata_file
 
 
@@ -33,7 +35,8 @@ def lambda_handler(event, context):
     This lambda function receives new file and updated file events from the prod S3DB
     bucket + prefix. File conversion requests are generated based on these live events.
     """
-    print(f"Event: {event}")
+
+    logger.info(event)
 
     for message in event["Records"]:
         sns_event = json.loads(message["body"])
@@ -47,10 +50,12 @@ def lambda_handler(event, context):
             dest_store = dest["dest_store"]
             # if it's a metadata file, just copy it directly
             if s3_key.endswith("METADATA.json") and dest_store == "dataclient":
+                logger.info(f"Copying over metadata file '{s3_key}'")
                 copy_metadata_file(coll, ds, dest["dest_prefix"])
 
             # trigger a conversion job
             else:
+                logger.info(f"Triggering Conversion job for '{s3_key}'")
                 SQS_CLIENT.send_message(
                     QueueUrl=os.environ["SINGLE_JOB_SQS_URL"],
                     MessageBody=json.dumps({"s3_key": s3_key, **dest}),

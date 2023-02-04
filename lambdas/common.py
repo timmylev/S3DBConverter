@@ -11,6 +11,7 @@ import boto3
 import psutil
 import pyarrow as pa
 from boto3.s3.transfer import TransferConfig
+from loguru import logger
 from pyarrow import csv, parquet as pq
 
 
@@ -142,6 +143,8 @@ def convert_data(
     level: Optional[int] = None,
 ) -> Iterator[tuple[str, bytes]]:
     for ts, coll, ds, table in load_as_partitions(source_keys, partition_size):
+        logger.info(f"Loaded partition {ts} for {coll}.{ds} with {len(table)} rows")
+
         if dest_store == "athena":
             if file_format != "parquet":
                 raise Exception(
@@ -165,6 +168,7 @@ def load_as_partitions(
     for gk, s3keys in group_s3keys_by_partition(source_keys, partition_size):
         coll, ds, file_start = gk
         table = _get_arrow_table(s3keys)
+        logger.info(f"Loaded table for {coll}.{ds} with {len(table)} rows")
 
         # for hourly partitions, we'll have to further split the file/table
         if partition_size == "hour":
@@ -320,4 +324,4 @@ def floor_dt(dt: datetime, period: str):
 def show_memory(text: str):
     process = psutil.Process(os.getpid())
     mb = process.memory_info().rss / 1_000_000
-    print(f"{text}: {mb}MB")
+    logger.debug(f"RRS: {mb}MB ({text})")
