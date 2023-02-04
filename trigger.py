@@ -212,6 +212,10 @@ class API:
 
     def get_glue_type_map_from_s3db(self, db, table):
         s3db_types = get_s3db_type_map(db, table)
+        # We have no way of knowing if the dataset uses big/small int/float because
+        # the S3DB metadata doesn't specify it. Opting for the smaller size during
+        # Glue schema creation leads to an error when querying later via Athena.
+        # eg: 'GENERIC_INTERNAL_ERROR: Value 2156111684 exceeds MAX_INT'
         overrides = {
             "target_start": "bigint",
             "target_end": "bigint",
@@ -220,11 +224,13 @@ class API:
         }
         conversions = {
             "str": "string",
+            "int": "bigint",
             "float": "double",
-            "bool": "tinyint",
+            "bool": "boolean",
             "timedelta": "double",
             "datetime": "bigint",
             "list": "string",
+            "tuple": "string",
         }
         return [
             {"Name": k, "Type": overrides.get(k, conversions.get(v, v))}
