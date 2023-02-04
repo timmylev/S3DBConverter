@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -6,7 +7,7 @@ from io import BytesIO
 import boto3
 from moto import mock_s3
 
-from lambdas.common import SOURCE_BUCKET, SOURCE_PREFIX
+from lambdas.common import SOURCE_BUCKET, SOURCE_PREFIX, gen_metadata_key
 
 
 s3 = mock_s3()
@@ -51,3 +52,17 @@ def insert_test_data(coll, ds, days=520):
             f.write(csv_data.encode())
 
         s3_client.put_object(Bucket=SOURCE_BUCKET, Key=s3_key, Body=stream.getvalue())
+
+    metadata = {
+        "type_map": {
+            "target_start": "int",
+            "target_end": "int",
+            "node_id": "int",
+            "lmp": "float",
+        },
+        "superkey": ["target_start", "target_end", "node_id"],
+        "value_key": ["lmp"],
+    }
+    data = json.dumps(metadata).encode()
+    key = gen_metadata_key(coll, ds)
+    s3_client.put_object(Bucket=SOURCE_BUCKET, Key=key, Body=data)

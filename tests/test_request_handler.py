@@ -57,7 +57,7 @@ def test_handler_for_dataclient(patched_bucket):
     source_files = list(_s3_list(SOURCE_BUCKET, f"{SOURCE_PREFIX}{coll}/{ds}"))
     dest_files = list(_s3_list(SOURCE_BUCKET, f"{events[0]['dest_prefix']}{coll}/{ds}"))
     # source files are partitioned by day as well
-    assert len(dest_files) == len(source_files)
+    assert len(dest_files) == len(source_files) - 1  # 1 extra metadata file
     # check that dataclient-styled path is generated with the correct extension
     assert all(reg.search(key) for key in dest_files)
 
@@ -68,7 +68,7 @@ def test_handler_for_dataclient(patched_bucket):
     source_files = list(_s3_list(SOURCE_BUCKET, f"{SOURCE_PREFIX}{coll}/{ds}"))
     dest_files = list(_s3_list(SOURCE_BUCKET, f"{events[0]['dest_prefix']}{coll}/{ds}"))
     # there be 24x dest files because source files are partitioned by day
-    assert len(dest_files) == len(source_files) * 24
+    assert len(dest_files) == (len(source_files) - 1) * 24  # 1 extra metadata file
     # check that dataclient-styled path is generated with the correct extension
     assert all(reg.search(key) for key in dest_files)
 
@@ -95,17 +95,17 @@ def test_handler_for_dataclient(patched_bucket):
 
 def test_handler_for_athena(patched_bucket):
     coll, ds, dest_store, fmt = "pjm", "dayahead_price", "athena", "parquet"
-    reg = re.compile(r"dt=\d{2}-\d{2}-\d{4}-\d{2}-\d{2}-\d{2}.*\.parquet")
     client = boto3.client("s3")
 
     # test daily partition
+    reg = re.compile(r"day_partition=\d{4}-\d{2}-\d{2}/\d+\.parquet")
     events = generate_events(coll, ds, "day", fmt, dest_store)
     for event in events:
         lambda_handler({"Records": [{"body": json.dumps(event)}]}, None)
     source_files = list(_s3_list(SOURCE_BUCKET, f"{SOURCE_PREFIX}{coll}/{ds}"))
     dest_files = list(_s3_list(SOURCE_BUCKET, f"{events[0]['dest_prefix']}{coll}/{ds}"))
     # source files are partitioned by day as well
-    assert len(dest_files) == len(source_files)
+    assert len(dest_files) == len(source_files) - 1  # 1 extra metadata file
     # check that it is a valid parquet file containing the correct data
     part_key = lambda ts: floor_dt(datetime.fromtimestamp(ts), "day").replace(
         tzinfo=timezone.utc
@@ -119,13 +119,14 @@ def test_handler_for_athena(patched_bucket):
         assert pk.pop() == extract_datetime(key)
 
     # test hourly partition
+    reg = re.compile(r"hour_partition=\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/\d+\.parquet")
     events = generate_events(coll, ds, "hour", fmt, dest_store)
     for event in events:
         lambda_handler({"Records": [{"body": json.dumps(event)}]}, None)
     source_files = list(_s3_list(SOURCE_BUCKET, f"{SOURCE_PREFIX}{coll}/{ds}"))
     dest_files = list(_s3_list(SOURCE_BUCKET, f"{events[0]['dest_prefix']}{coll}/{ds}"))
     # there be 24x dest files because source files are partitioned by day
-    assert len(dest_files) == len(source_files) * 24
+    assert len(dest_files) == (len(source_files) - 1) * 24  # 1 extra metadata file
     # check that it is a valid parquet file containing the correct data
     part_key = lambda ts: floor_dt(datetime.fromtimestamp(ts), "hour").replace(
         tzinfo=timezone.utc
@@ -139,6 +140,7 @@ def test_handler_for_athena(patched_bucket):
         assert pk.pop() == extract_datetime(key)
 
     # test monthly partition
+    reg = re.compile(r"month_partition=\d{4}-\d{2}-\d{2}/\d+\.parquet")
     events = generate_events(coll, ds, "month", fmt, dest_store)
     for event in events:
         lambda_handler({"Records": [{"body": json.dumps(event)}]}, None)
@@ -158,6 +160,7 @@ def test_handler_for_athena(patched_bucket):
         assert pk.pop() == extract_datetime(key)
 
     # test yearly partition
+    reg = re.compile(r"year_partition=\d{4}-\d{2}-\d{2}/\d+\.parquet")
     events = generate_events(coll, ds, "year", fmt, dest_store)
     for event in events:
         lambda_handler({"Records": [{"body": json.dumps(event)}]}, None)
