@@ -324,4 +324,4 @@ def floor_dt(dt: datetime, period: str):
 def show_memory(text: str):
     process = psutil.Process(os.getpid())
     mb = process.memory_info().rss / 1_000_000
-    logger.debug(f"RRS: {mb}MB ({text})")
+    logger.debug(f"RSS: {mb}MB ({text})")
