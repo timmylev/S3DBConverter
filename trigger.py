@@ -52,7 +52,8 @@ class GlueOptions(str, Enum):
     CREATE = "Check for New S3DB Datasets"
     REPAIR = "Check/Repair Table Schemas"
     DELETE = "Delete Tables"
-    BACK = "Back"
+    BACK = "BACK"
+    EXIT = "EXIT"
 
 
 class BackfillRange(str, Enum):
@@ -63,7 +64,7 @@ class BackfillRange(str, Enum):
 class Options(str, Enum):
     BACKFILLS = "Trigger S3DB Conversions"
     MANAGE_ATHENA = "Manage AthenaDB"
-    EXIT = "Exit"
+    EXIT = "EXIT"
 
 
 def main():
@@ -244,7 +245,7 @@ def print_welcome():
         cprint(f"({el['dest_store']})", "blue")
     print(" AthenaDB Source:")
     cprint(f"   {DATA_LOCATION}", "green")
-    print("\nJust follow the prompts:\n")
+    print("")
 
 
 def prompt_backfills(api):
@@ -341,70 +342,75 @@ def prompt_backfills(api):
 
 
 def prompt_athena_manager(api):
-    opt = prompt_options("What would you like to do:", [i.value for i in GlueOptions])
+    while True:
+        o = prompt_options("What would you like to do:", [i.value for i in GlueOptions])
 
-    if opt == GlueOptions.CREATE:
-        print("Checking for new S3DB datasets... ", end="", flush=True)
-        created, missing = api.check_glue_catalog()
+        if o == GlueOptions.CREATE:
+            print("Checking for new S3DB datasets... ", end="", flush=True)
+            created, missing = api.check_glue_catalog()
 
-        if any([tbs for tbs in missing.values()]):
-            print("new datasets detected:")
-            for db in sorted(missing.keys()):
-                tables = missing[db]
-                if tables:
-                    print(f"  {db:9}: {sorted(tables)}")
+            if any([tbs for tbs in missing.values()]):
+                print("new datasets detected:")
+                for db in sorted(missing.keys()):
+                    tables = missing[db]
+                    if tables:
+                        print(f"  {db:9}: {sorted(tables)}")
 
-            tables = sorted([f"{db}.{t}" for db, tbls in missing.items() for t in tbls])
-            to_create = prompt_checkbox("Select tables to create:", tables)
+                tables = sorted([f"{db}.{t}" for db, ts in missing.items() for t in ts])
+                to_create = prompt_checkbox("Select tables to create:", tables)
 
-            for el in to_create:
+                for el in to_create:
+                    db, tbl = el.split(".")
+                    api.create_glue_table(db, tbl)
+
+            else:
+                print("no new datasets detected.")
+
+        elif o == GlueOptions.DELETE:
+            print("Loading tables... ")
+            tables = [
+                f"{db}.{t['Name']}"
+                for db in api.list_glue_databases()
+                for t in api.list_glue_tables(db)
+            ]
+            to_delete = prompt_checkbox("Select tables:", sorted(tables))
+            for el in to_delete:
                 db, tbl = el.split(".")
-                api.create_glue_table(db, tbl)
+                api.delete_glue_table(db, tbl)
+
+        elif o == GlueOptions.REPAIR:
+            for db in api.list_glue_databases():
+                for table in api.list_glue_tables(db):
+                    name = table["Name"]
+                    print(f"Checking '{db}.{name}'... ", end="", flush=True)
+                    s3db_type = {
+                        el["Name"]: el["Type"]
+                        for el in api.get_glue_type_map_from_s3db(db, name)
+                    }
+                    table_type = {
+                        el["Name"]: el["Type"]
+                        for el in table["StorageDescriptor"]["Columns"]
+                    }
+                    if s3db_type != table_type:
+                        print("FAILED - Schema mismatch found!")
+                        print(f"   s3db: {s3db_type}")
+                        print(f"  table: {table_type}")
+                        if prompt_confirmation("Repair Glue Table?"):
+                            print(f"Updating '{db}.{name}'... ", end="", flush=True)
+                            api.create_glue_table(db, name, update=True)
+                            print("done")
+                    else:
+                        print("SUCCESS")
+
+        elif o == GlueOptions.BACK:
+            break
+
+        elif o == GlueOptions.EXIT:
+            print("Terminating...")
+            sys.exit(0)
 
         else:
-            print("no new datasets detected.")
-
-    elif opt == GlueOptions.DELETE:
-        print("Loading tables... ")
-        tables = [
-            f"{db}.{t['Name']}"
-            for db in api.list_glue_databases()
-            for t in api.list_glue_tables(db)
-        ]
-        to_delete = prompt_checkbox("Select tables:", sorted(tables))
-        for el in to_delete:
-            db, tbl = el.split(".")
-            api.delete_glue_table(db, tbl)
-
-    elif opt == GlueOptions.REPAIR:
-        for db in api.list_glue_databases():
-            for table in api.list_glue_tables(db):
-                name = table["Name"]
-                print(f"Checking '{db}.{name}'... ", end="", flush=True)
-                s3db_type = {
-                    el["Name"]: el["Type"]
-                    for el in api.get_glue_type_map_from_s3db(db, name)
-                }
-                table_type = {
-                    el["Name"]: el["Type"]
-                    for el in table["StorageDescriptor"]["Columns"]
-                }
-                if s3db_type != table_type:
-                    print("FAILED - Schema mismatch found!")
-                    print(f"   s3db: {s3db_type}")
-                    print(f"  table: {table_type}")
-                    if prompt_confirmation("Repair Glue Table?"):
-                        print(f"Updating '{db}.{name}'... ", end="", flush=True)
-                        api.create_glue_table(db, name, update=True)
-                        print("done")
-                else:
-                    print("SUCCESS")
-
-    elif opt == GlueOptions.BACK:
-        pass
-
-    else:
-        raise Exception(f"Unhandled selection: {opt}")
+            raise Exception(f"Unhandled selection: {o}")
 
 
 def prompt_text(text, default=None, validate=None) -> str:
