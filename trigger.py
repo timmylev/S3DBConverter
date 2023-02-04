@@ -19,7 +19,7 @@ from lambdas.common import (
     SOURCE_BUCKET,
     SOURCE_PREFIX,
     gen_partition_key,
-    get_dataset_type_map,
+    get_s3db_type_map,
     list_collections,
     list_datasets,
 )
@@ -211,7 +211,7 @@ class API:
         self.glue.delete_table(DatabaseName=db, Name=table)
 
     def get_glue_type_map_from_s3db(self, db, table):
-        s3db_types = get_dataset_type_map(db, table)
+        s3db_types = get_s3db_type_map(db, table)
         overrides = {
             "target_start": "bigint",
             "target_end": "bigint",

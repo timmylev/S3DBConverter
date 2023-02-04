@@ -111,10 +111,20 @@ def get_dataset_pkeys(collection: str, dataset: str) -> list[str]:
     return meta["superkey"]
 
 
-def get_dataset_type_map(collection: str, dataset: str) -> dict[str, str]:
+def get_s3db_type_map(collection: str, dataset: str) -> dict[str, str]:
     key = gen_metadata_key(collection, dataset)
     meta = json.load(S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=key)["Body"])
     return meta["type_map"]
+
+
+def get_arrow_type_overrides(collection: str, dataset: str) -> dict:
+    overrides = {"target_bounds": pa.int8()}
+    # ensure that string-typed columns doesn't get accidentaly infered as ints
+    conversions = {"str": pa.string(), "bool": pa.bool_()}
+    for k, v in get_s3db_type_map(collection, dataset).items():
+        if v in conversions:
+            overrides[k] = conversions[v]
+    return overrides
 
 
 def extract_datetime(s3_key: str) -> datetime:
@@ -167,7 +177,8 @@ def load_as_partitions(
 ) -> Iterator[tuple[int, str, str, pa.Table]]:
     for gk, s3keys in group_s3keys_by_partition(source_keys, partition_size):
         coll, ds, file_start = gk
-        table = _get_arrow_table(s3keys)
+        type_overrides = get_arrow_type_overrides(coll, ds)
+        table = _get_arrow_table(s3keys, type_overrides=type_overrides)
         logger.info(f"Loaded table for {coll}.{ds} with {len(table)} rows")
 
         # for hourly partitions, we'll have to further split the file/table
@@ -185,13 +196,15 @@ def load_as_partitions(
             yield file_start, coll, ds, table
 
 
-def _get_arrow_table(source_keys: list[str]) -> pa.Table:
+def _get_arrow_table(source_keys: list[str], type_overrides=None) -> pa.Table:
+    opts = csv.ConvertOptions(column_types=type_overrides) if type_overrides else None
+
     def download(i, k):
         data = S3_CLIENT.get_object(Bucket=SOURCE_BUCKET, Key=k)["Body"]
         # TODO: CSV has very limited types, eg:
         # - `bool` are stored as ints
         # - `bound` are stored
-        table = csv.read_csv(gzip.open(data))
+        table = csv.read_csv(gzip.open(data), convert_options=opts)
         show_memory(f"loaded table {i}")
         return table
 
