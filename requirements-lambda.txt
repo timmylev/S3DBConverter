@@ -1,5 +1,5 @@
+loguru
 pandas
 pyarrow
 pydantic
 psutil
-loguru
