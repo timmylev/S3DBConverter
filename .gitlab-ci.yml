@@ -1,0 +1,12 @@
+---
+include:
+  - project: invenia/gitlab-ci-helper
+    file: /templates/python.yml
+  - project: invenia/gitlab-ci-helper
+    file: /templates/ci-init.yml
+
+"Test Python 3.9":
+  extends:
+    - .py_3_9
+  script:
+    - tox -re formatting,types,py39
