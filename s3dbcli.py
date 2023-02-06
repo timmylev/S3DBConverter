@@ -26,9 +26,16 @@ from lambdas.common import (
 from lambdas.prod_listener import LIVE_STORES
 
 
-PROD_ACCOUNT = 516256908252
-# ATHENA_WORKGROUP = "s3db_admin"
-# DBS = ["caiso", "ercot", "iso_ne", "miso", "nyiso", "pjm", "spp", "weather"]
+ACCOUNTS = {
+    "production": {
+        "id": 516256908252,
+        "profile": "production:admin",
+    },
+    "services": {
+        "id": 534964971383,
+        "profile": "services:admin",
+    },
+}
 
 # Glue Catalog/Table and Athena Configs
 DATA_INPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
@@ -96,13 +103,55 @@ class API:
         self.aws_sesh = boto3.session.Session()
 
         resp = self.aws_sesh.client("sts").get_caller_identity()
-        if int(resp["Account"]) != PROD_ACCOUNT:
-            raise Exception("Please assume prod account role.")
+        self.curr_account = int(resp["Account"])
+        print(f"Running on account '{self.curr_account}'...")
 
-        self.cfn = self.aws_sesh.client("cloudformation")
-        self.lmb = self.aws_sesh.client("lambda")
-        self.athena = self.aws_sesh.client("athena")
-        self.glue = self.aws_sesh.client("glue")
+        self._prod_sesh = None
+        self._services_sesh = None
+
+        self._cfn = None
+        self._lmb = None
+        self._glue = None
+
+    @property
+    def prod_sesh(self):
+        if self._prod_sesh is None:
+            if self.curr_account != ACCOUNTS["production"]["id"]:
+                profile = ACCOUNTS["production"]["profile"]
+                print(f"Getting AWS session from profile '{profile}'...")
+            else:
+                profile = None
+            self._prod_sesh = boto3.session.Session(profile_name=profile)
+        return self._prod_sesh
+
+    @property
+    def services_sesh(self):
+        if self._services_sesh is None:
+            if self.curr_account != ACCOUNTS["services"]["id"]:
+                profile = ACCOUNTS["services"]["profile"]
+                print(f"Getting AWS session from profile '{profile}'...")
+            else:
+                profile = None
+            self._services_sesh = boto3.session.Session(profile_name=profile)
+        return self._services_sesh
+
+    @property
+    def cfn(self):
+        if self._cfn is None:
+            self._cfn = self.prod_sesh.client("cloudformation")
+        return self._cfn
+
+    @property
+    def lmb(self):
+        if self._lmb is None:
+            self._lmb = self.prod_sesh.client("lambda")
+        return self._lmb
+
+    @property
+    def glue(self):
+        if self._glue is None:
+            self._glue = self.services_sesh.client("glue")
+        return self._glue
 
     @property
     def stack_outputs(self):
