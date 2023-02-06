@@ -4,7 +4,7 @@ A micro-service that converts S3DB data (Transmuter output) to various formats, 
 * [General](#general)
 * [Limitations](#limitations)
 * [Usage](#usage)
-* [Deploy / Update](#deploy-/-update)
+* [Deploy and Update](#deploy-and-update)
 * [Architecture](#architecture)
 * [Athena SQL Reference](#athena-sql-reference)
 
@@ -53,7 +53,7 @@ These operations only modify the Glue Data Catalog, not the S3 data:
 * Updating the Glue catalog when a schema change for a dataset in S3DB is detected
 * Removing registered tables from the Glue catalog
 
-## Deploy / Update
+## Deploy and Update
 CFN args like stack name, bucket name, bucket prefix, etc. are already hard coded as constant in `deploy.py`, so, simply run the script to update (or redeploy) the stack:
 ```
 export AWS_DEFAULT_PROFILE=production:admin
