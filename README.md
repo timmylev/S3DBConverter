@@ -92,8 +92,7 @@ Refer to [AWS Athena DML queries, functions, and operators](https://docs.aws.ama
 
 ### Example 1: Partition Pruning
 The Athena source data is partitioned based on the `target_start` column using the partition key `day_partition`, which has the `date` type.
-This partition key acts exactly like a new column, it is separate from `target_start` and must be explicitly specified in the `WHERE` clause for partition pruning to take effect.
-Specifying just the `target_start` alone will not trigger partition pruning.
+This partition key acts exactly like a new column, it is separate from `target_start` and must be explicitly specified in the `WHERE` clause for partition pruning to take effect:
 ```sql
 # w/ partition pruning, only the relevant partitions are scanned
 SELECT *
@@ -103,10 +102,10 @@ WHERE
   day_partition BETWEEN date '2023-01-14' AND date '2023-02-05'
 AND
   target_start BETWEEN to_unixtime(timestamp '2023-01-14 13:00:00') AND to_unixtime(timestamp '2023-02-05 12:00:00');
+```
 
-# w/o partition pruning, all partitions (the entire table) are scanned
-# Note that even though the all partitions are scanned, it doesn't appear to be much slower
-# because partitions are scanned in parallel, but this will lead to a higher CPU cost.
+Specifying just the `target_start` alone will not trigger partition pruning, i.e. all partitions will be scanned.
+```sql
 SELECT *
 FROM
   miso.delta_price
