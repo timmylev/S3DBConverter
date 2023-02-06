@@ -38,6 +38,7 @@ ACCOUNTS = {
 }
 
 # Glue Catalog/Table and Athena Configs
+ATHENA_ACCOUNT = "services"
 DATA_INPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
 DATA_OUTPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
 SER_DER_LIB = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
@@ -107,7 +108,7 @@ class API:
         print(f"Running on account '{self.curr_account}'...")
 
         self._prod_sesh = None
-        self._services_sesh = None
+        self._athena_account_sesh = None
 
         self._cfn = None
         self._lmb = None
@@ -125,15 +126,15 @@ class API:
         return self._prod_sesh
 
     @property
-    def services_sesh(self):
-        if self._services_sesh is None:
-            if self.curr_account != ACCOUNTS["services"]["id"]:
-                profile = ACCOUNTS["services"]["profile"]
+    def athena_account_sesh(self):
+        if self._athena_account_sesh is None:
+            if self.curr_account != ACCOUNTS[ATHENA_ACCOUNT]["id"]:
+                profile = ACCOUNTS[ATHENA_ACCOUNT]["profile"]
                 print(f"Getting AWS session from profile '{profile}'...")
             else:
                 profile = None
-            self._services_sesh = boto3.session.Session(profile_name=profile)
-        return self._services_sesh
+            self._athena_account_sesh = boto3.session.Session(profile_name=profile)
+        return self._athena_account_sesh
 
     @property
     def cfn(self):
@@ -150,7 +151,7 @@ class API:
     @property
     def glue(self):
         if self._glue is None:
-            self._glue = self.services_sesh.client("glue")
+            self._glue = self.athena_account_sesh.client("glue")
         return self._glue
 
     @property
@@ -297,7 +298,9 @@ def print_welcome():
         uri = f"s3://{SOURCE_BUCKET}/{el['dest_prefix']}"
         cprint(f"   {uri}  ", "green", end="")
         cprint(f"({el['dest_store']})", "blue")
-    print(" AthenaDB Source:")
+    print(" Athena Account:")
+    cprint(f"   {ATHENA_ACCOUNT.upper()}", "green")
+    print(" Athena Source:")
     cprint(f"   {DATA_LOCATION}", "green")
     print("")
 
@@ -375,7 +378,7 @@ def prompt_backfills(api):
         num_datasets = sum([len(v) for v in targets.values()])
         msg = f"Backfilling {num_datasets} datasets. Proceed?"
         if prompt_confirmation(msg):
-            print("Trigerring Request Generator...", end="", flush=True)
+            print("Trigerring Request Generator... ")
 
             for coll, ds in targets.items():
                 if ds:
@@ -390,7 +393,7 @@ def prompt_backfills(api):
                         n_files=n_files,
                     )
 
-            print(" Done")
+            print("Done")
         else:
             print("Cancelling...")
 
@@ -400,11 +403,11 @@ def prompt_athena_manager(api):
         o = prompt_options("What would you like to do:", [i.value for i in GlueOptions])
 
         if o == GlueOptions.CREATE:
-            print("Checking for new S3DB datasets... ", end="", flush=True)
+            print("Checking for new S3DB datasets...")
             created, missing = api.check_glue_catalog()
 
             if any([tbs for tbs in missing.values()]):
-                print("new datasets detected:")
+                print("New datasets detected:")
                 for db in sorted(missing.keys()):
                     tables = missing[db]
                     if tables:
@@ -418,7 +421,7 @@ def prompt_athena_manager(api):
                     api.create_glue_table(db, tbl)
 
             else:
-                print("no new datasets detected.")
+                print("No new datasets detected.")
 
         elif o == GlueOptions.DELETE:
             print("Loading tables... ")
