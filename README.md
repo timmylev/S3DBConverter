@@ -9,6 +9,7 @@ A micro-service that converts S3DB data (Transmuter output) to various formats, 
 * [Athena SQL Reference](#athena-sql-reference)
 
 ## General
+### Data Conversion Jobs
 Data conversions may be triggered as a one-off job for historical data or configured as a live workload that automatically triggers on new prod data as they become available. 
 Supported outputs:
 * formats: `arrow`, `parquet`
@@ -16,17 +17,30 @@ Supported outputs:
 * partition sizes: `hour`, `day`, `month`, `year`
 * S3 directory structures:
   * `dataclient` - A [DataClient.jl](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl) compatible directory structure, i.e. the same directory structure as the source S3DB data.
-  * `athena` - A custom directory structure that uses Apache Hive partitioning scheme - uses a single level partition based on the S3DB `target_start` column. This is designed for optimal querying via AWS Athena. The partition key and value type used will depend on the partition size selected:
-    * `hour` partition: key - `hour_partition`, type - `timestamp`, eg.`../db/table/hour_partition=2021-06-15 20:00:00/..`
-    * `day` partition: key - `day_partition`, type - `date`, eg.`../db/table/day_partition=2021-06-15/..`
-    * `month` partition: key - `month_partition`, type - `date`, eg.`../db/table/month_partition=2021-06-01/..`
-    * `year` partition: key - `year_partition`, type - `date`, eg.`../db/table/year_partition=2021-01-01/..`
+  * `athena` - A custom directory structure that uses Apache Hive partitioning scheme - uses a single level partition based on the S3DB 'target_start' column. This is designed for optimal querying via AWS Athena. The partition key and value type used will depend on the partition size selected:
+    * `hour` partition: Key - 'hour_partition', Type - timestamp, eg.'../db/table/hour_partition=2021-06-15 20:00:00/..'
+    * `day` partition: Key - 'day_partition', Type - date, eg.'../db/table/day_partition=2021-06-15/..'
+    * `month` partition: Key - 'month_partition', Type - date, eg.'../db/table/month_partition=2021-06-01/..'
+    * `year` partition: Key - 'year_partition', Type - date, eg.'../db/table/year_partition=2021-01-01/..'
 
+### S3DB CLI
 This repository also provides a CLI utility (`s3dbcli.py`) to:
 * Trigger one-off data conversion jobs on historical S3DB data
-* Manage the AWS Glue Data Catalog for S3DB data - With some extra work, AWS Athena makes it possible for us to use SQL to efficiently query data in S3DB:
+* Manage the AWS Glue Data Catalog for S3DB data
+
+#### AWS Athena and AWS Glue Data Catalog
+S3DB already contains highly structured data and it would be great if we could query S3DB directly using SQL without having to maintain costly RDBMS servers.
+With a little extra work, we can achieve this via AWS Athena:
   * Re-formatting and re-partitioning S3DB data - While it is possible to query the CSV source directly, it is much more efficient to convert this CSV data to Parquet and re-partition (Hive-style) them by `day` before querying. This process is handled by our S3DBConverter micro-service.
   * A metadata store for the source data - For Athena to know how and where to query data from, it requires a data catalog to supply metadata about the source data in S3. We use AWS Glue Data Catalog as our metadata store, which stores metadata for each S3DB dataset such as S3 location, data format, compression, table schema, partitioning details, etc. This data catalog needs to be updated from time to time because new datasets may be added to S3DB and the columns/types of existing datasets may be updated over time. The `S3DB CLI` provides utilities to manage and maintain the Glue Data Catalog such as scanning the source S3DB data and adding/updating tables in the catalog.
+
+##### Athena Partition Projection
+S3DB only consists of time-series datasets, all of which have a `target_start` column, by which we use to partition the dataset.
+Traditionally, each partition must be explicitly registered in the data catalog before it is accessible.
+This creates extra complexity for live-populating dataset because new partitions must be manually registered in the catalog.
+Additionally, the query planner retrieves partition metadata from the catalog for each query, and this may take away from the performance improvements obtained via partitioning if there are a large number of partitions.
+So work around both of these issues, we use [AWS Athena Partition Projection](https://docs.aws.amazon.com/athena/latest/ug/partition-projection.html), where partition values and locations are dynamically calculated from configuration rather than read from the data catalog.
+This also means we no longer have to worry about registering new partitions in the catalog as they are create because we no longer use the partition metadata.
 
 ## Limitations
 1. The destination/output for converted files must be **in the same bucket** (`invenia-datafeeds-output`), but with a **non-overlapping prefix with the source** (`version5/aurora/gz/`). You can copy the converted output to any other bucket on your own.
