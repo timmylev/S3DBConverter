@@ -73,8 +73,8 @@ class BackfillRange(str, Enum):
 
 
 class Options(str, Enum):
-    BACKFILLS = "Trigger S3DB Conversions"
-    MANAGE_ATHENA = "Manage Glue Tables (for Athena)"
+    BACKFILLS = "Trigger S3DB Conversions        - requries access to the Production Admin Role"  # noqa
+    MANAGE_ATHENA = "Manage Glue Tables (for Athena) - required access depends on the target account (next step)"  # noqa
     EXIT = "EXIT"
 
 
@@ -84,7 +84,7 @@ def main():
     aws_id = boto3.client("sts").get_caller_identity()["Account"]
     print(f"Running on account '{aws_id}'...")
 
-    api = API(prompt_text("Stack Name:", default=STACK_NAME))
+    api = API(STACK_NAME)
 
     while True:
         action = prompt_options(
