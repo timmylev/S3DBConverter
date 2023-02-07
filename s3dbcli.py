@@ -4,6 +4,7 @@ import sys
 from enum import Enum
 
 import boto3
+from loguru import logger
 from pyfiglet import Figlet
 from PyInquirer import Separator, prompt
 from termcolor import cprint
@@ -137,7 +138,9 @@ class API:
         if self._prod_sesh is None:
             if self.curr_account != ACCOUNTS["production"]["id"]:
                 prod_admin = ACCOUNTS["production"]["role"]
-                print(f"Getting AWS sesh using production role '{prod_admin}'...")
+                logger.info(
+                    f"Getting AWS sesh using 'production' role '{prod_admin}'..."
+                )
                 self._prod_sesh, _ = self._assume_iam_role(prod_admin, "s3dbcli")
 
             else:
@@ -149,14 +152,16 @@ class API:
     def athena_acc_sesh(self):
         if self._athena_acc_sesh is None:
             if self.athena_acc_profile:
-                print(f"Getting AWS sesh using profile '{self.athena_acc_profile}'...")
+                logger.info(
+                    f"Getting AWS sesh using profile '{self.athena_acc_profile}'..."
+                )
                 self._athena_acc_sesh = boto3.session.Session(
                     profile_name=self.athena_acc_profile
                 )
 
             elif self.curr_account != ACCOUNTS[ATHENA_DEFAULT_ACCOUNT]["id"]:
                 role = ACCOUNTS[ATHENA_DEFAULT_ACCOUNT]["role"]
-                print(
+                logger.info(
                     f"Getting AWS sesh using {ATHENA_DEFAULT_ACCOUNT} role '{role}'..."
                 )
                 self._athena_acc_sesh, _ = self._assume_iam_role(role, "s3dbcli")
@@ -246,7 +251,6 @@ class API:
             yield from page["TableList"]
 
     def create_glue_table(self, db, table, update=False):
-        print(f"Creating Glue Table '{db}.{table}'...")
         operation = self.glue.update_table if update else self.glue.create_table
         # TODO: find the start date per dataset dynamically
         pp_range = f"2010-01-01,{PARTITION_PROJECTION_END}"
@@ -467,6 +471,7 @@ def prompt_athena_manager(api):
                         print(f"Creating database '{db}'...")
                         api.create_glue_database(db)
 
+                    print(f"Creating Glue Table '{db}.{tbl}'...")
                     api.create_glue_table(db, tbl)
 
             else:
