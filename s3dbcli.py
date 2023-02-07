@@ -63,7 +63,8 @@ PARTITION_PROJECTION_END = "NOW+1WEEKS"
 class GlueOptions(str, Enum):
     CREATE = "Check for New S3DB Datasets"
     REPAIR = "Check/Repair Table Schemas"
-    DELETE = "Delete Tables"
+    DELETE_DATABASE = "Delete Databases"
+    DELETE_TABLE = "Delete Tables"
     BACK = "BACK"
     EXIT = "EXIT"
 
@@ -288,6 +289,9 @@ class API:
     def delete_glue_table(self, db, table):
         self.glue.delete_table(DatabaseName=db, Name=table)
 
+    def delete_glue_database(self, db):
+        self.glue.delete_database(Name=db)
+
     def get_glue_type_map_from_s3db(self, db, table):
         s3db_types = get_s3db_type_map(db, table)
         # We have no way of knowing if the dataset uses big/small int/float because
@@ -470,6 +474,7 @@ def prompt_athena_manager(api):
                     if db not in created:
                         print(f"Creating database '{db}'...")
                         api.create_glue_database(db)
+                        created[db] = None
 
                     print(f"Creating Glue Table '{db}.{tbl}'...")
                     api.create_glue_table(db, tbl)
@@ -477,7 +482,7 @@ def prompt_athena_manager(api):
             else:
                 print("No new datasets detected.")
 
-        elif o == GlueOptions.DELETE:
+        elif o == GlueOptions.DELETE_TABLE:
             print("Loading tables... ")
             tables = [
                 f"{db}.{t['Name']}"
@@ -492,6 +497,17 @@ def prompt_athena_manager(api):
                     api.delete_glue_table(db, tbl)
             else:
                 print("No tables found!")
+
+        elif o == GlueOptions.DELETE_DATABASE:
+            print("Loading databases... ")
+            dbs = [db for db in api.list_glue_databases()]
+            if dbs:
+                to_delete = prompt_checkbox("Select databases:", sorted(dbs))
+                for db in to_delete:
+                    print(f"Deleting Glue Database '{db}'...")
+                    api.delete_glue_database(db)
+            else:
+                print("No databases found!")
 
         elif o == GlueOptions.REPAIR:
             for db in api.list_glue_databases():
