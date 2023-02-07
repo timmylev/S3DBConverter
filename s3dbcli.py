@@ -92,11 +92,11 @@ def main():
             prompt_backfills(api)
 
         elif action == Options.MANAGE_ATHENA:
-            staging = "Services Accont (default)"
+            default = f"{ATHENA_DEFAULT_ACCOUNT.upper()} Accont (default)"
             profiles = boto3.session.Session().available_profiles
-            options = [staging, Separator("===== available profiles ====="), *profiles]
+            options = [default, Separator("===== available profiles ====="), *profiles]
             profile = prompt_options("Select AWS account/profile for Athena", options)
-            profile = None if profile == staging else profile
+            profile = None if profile == default else profile
 
             if api.athena_acc_profile != profile:
                 api = API(api.stack_name, athena_account_profile=profile)
