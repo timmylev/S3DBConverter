@@ -26,6 +26,9 @@ from lambdas.common import (
 from lambdas.prod_listener import LIVE_STORES
 
 
+CLI_VERSION = "1.0.0"
+
+
 ACCOUNTS = {
     "production": {
         "id": 516256908252,
@@ -330,7 +333,7 @@ class API:
 
 def print_welcome():
     cprint(Figlet(font="big").renderText("S3DB   CLI"), "blue")
-    print("\nWelcome to S3DB CLI!\n")
+    print(f"\nWelcome to S3DB CLI v{CLI_VERSION}!\n")
     print(" S3DB Source:")
     cprint(f"   s3://{SOURCE_BUCKET}/{SOURCE_PREFIX}", "green")
     print(f" Live Conversions ({len(LIVE_STORES)}):")
