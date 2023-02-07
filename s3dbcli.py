@@ -74,7 +74,7 @@ class BackfillRange(str, Enum):
 
 class Options(str, Enum):
     BACKFILLS = "Trigger S3DB Conversions"
-    MANAGE_ATHENA = "Manage AthenaDB"
+    MANAGE_ATHENA = "Manage Glue Tables (for Athena)"
     EXIT = "EXIT"
 
 
@@ -95,10 +95,13 @@ def main():
             prompt_backfills(api)
 
         elif action == Options.MANAGE_ATHENA:
-            default = f"{ATHENA_DEFAULT_ACCOUNT.upper()} Accont (default)"
+            default = f"{ATHENA_DEFAULT_ACCOUNT.upper()} Accont Admin Role (default)"
             profiles = boto3.session.Session().available_profiles
-            options = [default, Separator("===== available profiles ====="), *profiles]
-            profile = prompt_options("Select AWS account/profile for Athena", options)
+
+            profile = prompt_options(
+                "Select an AWS Account/Role (Glue Tables can be deployed to any account)",  # noqa
+                [default, Separator("====== Available AWS Profiles ======"), *profiles],
+            )
             profile = None if profile == default else profile
 
             if api.athena_acc_profile != profile:
