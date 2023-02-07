@@ -29,16 +29,16 @@ from lambdas.prod_listener import LIVE_STORES
 ACCOUNTS = {
     "production": {
         "id": 516256908252,
-        "profile": "production:admin",
+        "role": "arn:aws:iam::516256908252:role/Admin",
     },
     "services": {
         "id": 534964971383,
-        "profile": "services:admin",
+        "role": "arn:aws:iam::534964971383:role/Admin",
     },
 }
 
 # Glue Catalog/Table and Athena Configs
-ATHENA_ACCOUNT = "services"
+ATHENA_DEFAULT_ACCOUNT = "services"
 DATA_INPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
 DATA_OUTPUT_FORMAT = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
 SER_DER_LIB = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
@@ -78,6 +78,9 @@ class Options(str, Enum):
 def main():
     print_welcome()
 
+    aws_id = boto3.client("sts").get_caller_identity()["Account"]
+    print(f"Running on account '{aws_id}'...")
+
     api = API(prompt_text("Stack Name:", default=STACK_NAME))
 
     while True:
@@ -89,6 +92,15 @@ def main():
             prompt_backfills(api)
 
         elif action == Options.MANAGE_ATHENA:
+            staging = "Services Accont (default)"
+            profiles = boto3.session.Session().available_profiles
+            options = [staging, Separator("===== available profiles ====="), *profiles]
+            profile = prompt_options("Select AWS account/profile for Athena", options)
+            profile = None if profile == staging else profile
+
+            if api.athena_acc_profile != profile:
+                api = API(api.stack_name, athena_account_profile=profile)
+
             prompt_athena_manager(api)
 
         elif action == Options.EXIT:
@@ -97,7 +109,7 @@ def main():
 
 
 class API:
-    def __init__(self, stack_name):
+    def __init__(self, stack_name, athena_account_profile=None):
         self.stack_name = stack_name
         self._stack_outputs = None
 
@@ -105,10 +117,10 @@ class API:
 
         resp = self.aws_sesh.client("sts").get_caller_identity()
         self.curr_account = int(resp["Account"])
-        print(f"Running on account '{self.curr_account}'...")
 
         self._prod_sesh = None
-        self._athena_account_sesh = None
+        self.athena_acc_profile = athena_account_profile
+        self._athena_acc_sesh = None
 
         self._cfn = None
         self._lmb = None
@@ -118,23 +130,34 @@ class API:
     def prod_sesh(self):
         if self._prod_sesh is None:
             if self.curr_account != ACCOUNTS["production"]["id"]:
-                profile = ACCOUNTS["production"]["profile"]
-                print(f"Getting AWS session from profile '{profile}'...")
+                prod_admin = ACCOUNTS["production"]["role"]
+                print(f"Getting AWS sesh using production role '{prod_admin}'...")
+                self._prod_sesh, _ = self._assume_iam_role(prod_admin, "s3dbcli")
+
             else:
-                profile = None
-            self._prod_sesh = boto3.session.Session(profile_name=profile)
+                self._prod_sesh = boto3.session.Session()
+
         return self._prod_sesh
 
     @property
-    def athena_account_sesh(self):
-        if self._athena_account_sesh is None:
-            if self.curr_account != ACCOUNTS[ATHENA_ACCOUNT]["id"]:
-                profile = ACCOUNTS[ATHENA_ACCOUNT]["profile"]
-                print(f"Getting AWS session from profile '{profile}'...")
+    def athena_acc_sesh(self):
+        if self._athena_acc_sesh is None:
+            if self.athena_acc_profile:
+                print(f"Getting AWS sesh using profile '{self.athena_acc_profile}'...")
+                self._athena_acc_sesh = boto3.session.Session(
+                    profile_name=self.athena_acc_profile
+                )
+
+            elif self.curr_account != ACCOUNTS[ATHENA_DEFAULT_ACCOUNT]["id"]:
+                role = ACCOUNTS[ATHENA_DEFAULT_ACCOUNT]["role"]
+                print(
+                    f"Getting AWS sesh using {ATHENA_DEFAULT_ACCOUNT} role '{role}'..."
+                )
+                self._athena_acc_sesh, _ = self._assume_iam_role(role, "s3dbcli")
             else:
-                profile = None
-            self._athena_account_sesh = boto3.session.Session(profile_name=profile)
-        return self._athena_account_sesh
+                self._athena_acc_sesh = boto3.session.Session()
+
+        return self._athena_acc_sesh
 
     @property
     def cfn(self):
@@ -151,7 +174,7 @@ class API:
     @property
     def glue(self):
         if self._glue is None:
-            self._glue = self.athena_account_sesh.client("glue")
+            self._glue = self.athena_acc_sesh.client("glue")
         return self._glue
 
     @property
@@ -198,20 +221,13 @@ class API:
         s3db_colls = set(list_collections())
         glue_dbs = set([el["Name"] for el in self.glue.get_databases()["DatabaseList"]])
 
-        missing_dbs = s3db_colls - glue_dbs
-        if missing_dbs:
-            print(f"Detected {len(missing_dbs)} missing database(s)")
-            for db in missing_dbs:
-                print(f"Creating database '{db}'...")
-                self.glue.create_database(DatabaseInput={"Name": db})
-
-        available_tables = {db: list_datasets(db) for db in s3db_colls}
-        created_tables = {db: list(self.list_glue_tables(db)) for db in s3db_colls}
-        missing_tables = {
-            db: set(available_tables[db]) - set([t["Name"] for t in created_tables[db]])
+        available = {db: list_datasets(db) for db in s3db_colls}
+        created = {db: list(self.list_glue_tables(db)) for db in glue_dbs}
+        missing = {
+            db: set(available[db]) - set([t["Name"] for t in created.get(db, [])])
             for db in s3db_colls
         }
-        return created_tables, missing_tables
+        return created, missing
 
     def list_glue_databases(self):
         s3db_colls = set(list_collections())
@@ -256,8 +272,10 @@ class API:
             },
         )
 
+    def create_glue_database(self, db):
+        self.glue.create_database(DatabaseInput={"Name": db})
+
     def delete_glue_table(self, db, table):
-        print(f"Deleting Glue Table '{db}.{table}'...")
         self.glue.delete_table(DatabaseName=db, Name=table)
 
     def get_glue_type_map_from_s3db(self, db, table):
@@ -287,6 +305,28 @@ class API:
             for k, v in s3db_types.items()
         ]
 
+    def _assume_iam_role(
+        self,
+        role_arn: str,
+        sesh_name: str,
+        sesh_duration: int = 3600,
+    ):
+        response = boto3.client("sts").assume_role(
+            RoleArn=role_arn,
+            RoleSessionName=sesh_name,
+            DurationSeconds=sesh_duration,
+        )
+        credentials = response["Credentials"]
+
+        sesh = boto3.session.Session(
+            aws_access_key_id=credentials["AccessKeyId"],
+            aws_secret_access_key=credentials["SecretAccessKey"],
+            aws_session_token=credentials["SessionToken"],
+        )
+        sesh_expiry = credentials["Expiration"]
+
+        return sesh, sesh_expiry
+
 
 def print_welcome():
     cprint(Figlet(font="big").renderText("S3DB   CLI"), "blue")
@@ -298,8 +338,6 @@ def print_welcome():
         uri = f"s3://{SOURCE_BUCKET}/{el['dest_prefix']}"
         cprint(f"   {uri}  ", "green", end="")
         cprint(f"({el['dest_store']})", "blue")
-    print(" Athena Account:")
-    cprint(f"   {ATHENA_ACCOUNT.upper()}", "green")
     print(" Athena Source:")
     cprint(f"   {DATA_LOCATION}", "green")
     print("")
@@ -371,7 +409,7 @@ def prompt_backfills(api):
     else:
         n_files = prompt_options("Select file range:", [e.value for e in BackfillRange])
         if n_files == BackfillRange.LATEST_N:
-            n_files = prompt_text("Specify number of files:")
+            n_files = int(prompt_text("Specify number of files:"))
         else:
             n_files = None
 
@@ -418,6 +456,11 @@ def prompt_athena_manager(api):
 
                 for el in to_create:
                     db, tbl = el.split(".")
+
+                    if db not in created:
+                        print(f"Creating database '{db}'...")
+                        api.create_glue_database(db)
+
                     api.create_glue_table(db, tbl)
 
             else:
@@ -430,10 +473,14 @@ def prompt_athena_manager(api):
                 for db in api.list_glue_databases()
                 for t in api.list_glue_tables(db)
             ]
-            to_delete = prompt_checkbox("Select tables:", sorted(tables))
-            for el in to_delete:
-                db, tbl = el.split(".")
-                api.delete_glue_table(db, tbl)
+            if tables:
+                to_delete = prompt_checkbox("Select tables:", sorted(tables))
+                for el in to_delete:
+                    db, tbl = el.split(".")
+                    print(f"Deleting Glue Table '{db}.{tbl}'...")
+                    api.delete_glue_table(db, tbl)
+            else:
+                print("No tables found!")
 
         elif o == GlueOptions.REPAIR:
             for db in api.list_glue_databases():
