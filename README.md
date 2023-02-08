@@ -2,6 +2,9 @@
 A micro-service that converts S3DB data (Transmuter output) to various formats, compressions, and partitions.
 
 * [General](#general)
+  * [Data Conversion Jobs](#data-conversion-jobs)
+  * [S3DB CLI](#s3db-cli)
+  * [AWS Athena and Glue Data Catalog](#aws-athena-and-glue-data-catalog)
 * [Limitations](#limitations)
 * [Usage](#usage)
 * [Deploy and Update](#deploy-and-update)
@@ -24,18 +27,20 @@ Supported outputs:
     * `year` partition: Key - 'year_partition', Type - date, eg.'../db/table/year_partition=2021-01-01/..'
 
 ### S3DB CLI
-This repository also provides a CLI utility (`s3dbcli.py`) to:
-* Trigger one-off data conversion jobs on historical S3DB data
-* Manage the AWS Glue Data Catalog for S3DB data
+This repository also provides a CLI utility (`s3dbcli.py`) to interact with the micro service (stack is deployed to the production account) to triggering data conversion backfill jobs.
 
-#### AWS Athena and AWS Glue Data Catalog
+Additionally, the CLI also provides operations to manage the AWS Glue Data Catalog (create/update/delete Glue tables for S3DB data) for any AWS account.
+Glue Tables contain metadata about data in S3 and they are used by AWS Athena to process user SQL queries.
+Note that these operations (and anything related to Glue/Athena) have nothing to do with the S3DBConverter micro-service/stack, they are simply convenience operations for users to create/update Glue Tables so that S3DB data can be queries via Athena.
+
+### AWS Athena and Glue Data Catalog
 S3DB already contains highly structured data and it would be great if we could query S3DB directly using SQL without having to maintain costly RDBMS servers.
 With a little extra work, we can achieve this via AWS Athena:
-  * Re-formatting and re-partitioning S3DB data - While it is possible to query the CSV source directly, it is much more efficient to convert this CSV data to Parquet and re-partition (Hive-style) them by `day` before querying. This process is handled by our S3DBConverter micro-service.
-  * A metadata store for the source data - For Athena to know how and where to query data from, it requires a data catalog to supply metadata about the source data in S3. We use AWS Glue Data Catalog as our metadata store, which stores metadata for each S3DB dataset such as S3 location, data format, compression, table schema, partitioning details, etc. This data catalog needs to be updated from time to time because new datasets may be added to S3DB and the columns/types of existing datasets may be updated over time. The `S3DB CLI` provides utilities to manage and maintain the Glue Data Catalog such as scanning the source S3DB data and adding/updating tables in the catalog.
+  * Re-formatting and re-partitioning S3DB data - While it is possible to query the S3DB CSV source directly, it is much more efficient to convert this CSV data to Parquet and re-partition (Hive-style) them by `day` before querying. This process is handled by our S3DBConverter micro-service, where live S3DB data are being automatically converted into parquet and partitioned by day, and outputted to `s3://invenia-datafeeds-output/version5/athena/parquet/sz/day/`.
+  * Creating a data catalog for the source data - For Athena to know how and where to query data from, it requires a data catalog to supply metadata about the source data in S3. AWS Glue Data Catalog can be used as Athena's metadata store, which stores metadata for each S3DB dataset such as S3 location, data format, compression, table schema, partitioning details, etc. This data catalog needs to be updated from time to time because new datasets may be added to S3DB and the columns/types of existing datasets may be updated over time. The `S3DB CLI` provides utilities to manage and maintain the Glue Data Catalog such as scanning the source S3DB data and adding/updating tables in the catalog. This works for any AWS account the user selects / has access to.
 
-##### Athena Partition Projection
-S3DB only consists of time-series datasets, all of which have a `target_start` column, by which we use to partition the dataset.
+#### Athena Partition Projection
+S3DB only consists of time-series datasets, all of which have a `target_start` column, so it makes a lot of sense to partition datasets by this column to improve query performance.
 Traditionally, each partition must be explicitly registered in the data catalog before it is accessible.
 This creates extra complexity for live-populating dataset because new partitions must be manually registered in the catalog.
 Additionally, the query planner retrieves partition metadata from the catalog for each query, and this may take away from the performance improvements obtained via partitioning if there are a large number of partitions.
@@ -165,6 +170,6 @@ WITH inject_latest AS (
     sum_mcc_mlc
 FROM inject_latest
 WHERE
-  release_date = latest_release
+  release_date = latest_release;
 
 ```
